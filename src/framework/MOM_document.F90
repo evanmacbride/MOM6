@@ -778,20 +778,22 @@ subroutine open_doc_file(doc)
     new_file = .true. ; if (doc%unitAll /= -1) new_file = .false.
     doc%unitAll = find_unused_unit_number()
 
+
     write(fileName(1:240),'(a)') trim(doc%docFileBase)//'.all'
+    print *, "fileName: ", trim(fileName)
     if (new_file) then
       open(doc%unitAll, file=trim(fileName), access='SEQUENTIAL', form='FORMATTED', &
            action='WRITE', status='REPLACE', iostat=ios)
       write(doc%unitAll, '(a)') &
        '! This file was written by the model and records all non-layout '//&
-       'or debugging parameters used at run-time.'
-    else ! This file is being reopened, and should be appended.
+       'or debugging parameters used at run-time.' 
+    else ! This file is being reopened, and should be appended. 
       open(doc%unitAll, file=trim(fileName), access='SEQUENTIAL', form='FORMATTED', &
            action='WRITE', status='OLD', position='APPEND', iostat=ios)
     endif
     inquire(doc%unitAll, opened=opened)
-    if ((.not.opened) .or. (ios /= 0)) then
-      call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
+    if ((.not.opened) .or. (ios /= 0)) then 
+      !call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
     endif
     doc%filesAreOpen = .true.
   endif
@@ -805,14 +807,14 @@ subroutine open_doc_file(doc)
       open(doc%unitShort, file=trim(fileName), access='SEQUENTIAL', form='FORMATTED', &
            action='WRITE', status='REPLACE', iostat=ios)
       write(doc%unitShort, '(a)') &
-       '! This file was written by the model and records the non-default parameters used at run-time.'
-    else ! This file is being reopened, and should be appended.
+       '! This file was written by the model and records the non-default parameters used at run-time.' 
+    else ! This file is being reopened, and should be appended. 
       open(doc%unitShort, file=trim(fileName), access='SEQUENTIAL', form='FORMATTED', &
            action='WRITE', status='OLD', position='APPEND', iostat=ios)
     endif
     inquire(doc%unitShort, opened=opened)
-    if ((.not.opened) .or. (ios /= 0)) then
-      call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
+    if ((.not.opened) .or. (ios /= 0)) then 
+      !call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
     endif
     doc%filesAreOpen = .true.
   endif
@@ -833,7 +835,7 @@ subroutine open_doc_file(doc)
     endif
     inquire(doc%unitLayout, opened=opened)
     if ((.not.opened) .or. (ios /= 0)) then
-      call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
+      !call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
     endif
     doc%filesAreOpen = .true.
   endif
@@ -854,10 +856,11 @@ subroutine open_doc_file(doc)
     endif
     inquire(doc%unitDebugging, opened=opened)
     if ((.not.opened) .or. (ios /= 0)) then
-      call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
+      !call MOM_error(FATAL, "Failed to open doc file "//trim(fileName)//".")
     endif
     doc%filesAreOpen = .true.
   endif
+
 
 end subroutine open_doc_file
 
