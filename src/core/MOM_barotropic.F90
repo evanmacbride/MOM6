@@ -796,14 +796,17 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 ! the halo update that needs to be completed before the next calculations.
   if (CS%linearized_BT_PV) then
     !$OMP parallel do default(shared)
+    !$acc parallel loop default(present)
     do J=jsvf-2,jevf+1 ; do I=isvf-2,ievf+1
       q(I,J) = CS%q_D(I,j)
     enddo ; enddo
     !$OMP parallel do default(shared)
+    !$acc parallel loop default(preset)
     do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
       DCor_u(I,j) = CS%D_u_Cor(I,j)
     enddo ; enddo
     !$OMP parallel do default(shared)
+    !$acc parallel loop default(preset)
     do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
       DCor_v(i,J) = CS%D_v_Cor(i,J)
     enddo ; enddo
@@ -812,14 +815,17 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !  This option has not yet been written properly.
     !  ### bathyT here should be replaced with bathyT+eta(Bous) or eta(non-Bous).
     !$OMP parallel do default(shared)
+    !$acc parallel loop default(preset)
     do j=js,je ; do I=is-1,ie
       DCor_u(I,j) = 0.5 * (G%bathyT(i+1,j) + G%bathyT(i,j))
     enddo ; enddo
     !$OMP parallel do default(shared)
+    !$acc parallel loop default(preset)
     do J=js-1,je ; do i=is,ie
       DCor_v(i,J) = 0.5 * (G%bathyT(i,j+1) + G%bathyT(i,j))
     enddo ; enddo
     !$OMP parallel do default(shared)
+    !$acc parallel loop default(preset)
     do J=js-1,je ; do I=is-1,ie
       q(I,J) = 0.25 * US%s_to_T*G%CoriolisBu(I,J) * &
            ((G%areaT(i,j) + G%areaT(i+1,j+1)) + (G%areaT(i+1,j) + G%areaT(i,j+1))) / &
@@ -1508,8 +1514,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     else
       wt_vel(n) = 0.0  ; wt_eta(n) = 0.0
     endif
-!###    if (n < nstep-nfilter) then ; wt_vel(n) = 0.0 ; else ; wt_vel(n) = 1.0 ; endif
-!###    if (n < nstep-nfilter) then ; wt_eta(n) = 0.0 ; else ; wt_eta(n) = 1.0 ; endif
+    !###    if (n < nstep-nfilter) then ; wt_vel(n) = 0.0 ; else ; wt_vel(n) = 1.0 ; endif
+    !###    if (n < nstep-nfilter) then ; wt_eta(n) = 0.0 ; else ; wt_eta(n) = 1.0 ; endif
 
     ! The rest should not be changed.
     sum_wt_vel = sum_wt_vel + wt_vel(n) ; sum_wt_eta = sum_wt_eta + wt_eta(n)
