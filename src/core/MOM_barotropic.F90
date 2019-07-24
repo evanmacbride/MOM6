@@ -1580,30 +1580,30 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         call find_face_areas(Datu, Datv, G, GV, CS, MS, eta, 1+iev-ie)
     endif
 
-!GOMP parallel default(none) shared(CS,isv,iev,jsv,jev,project_velocity,use_BT_cont, &
-!GOMP                               uhbt,vhbt,ubt,BTCL_u,uhbt0,vbt,BTCL_v,vhbt0,     &
-!GOMP                               eta_pred,eta,eta_src,dtbt,Datu,Datv,p_surf_dyn,  &
-!GOMP                               dyn_coef_eta,find_etaav,is,ie,js,je,eta_sum,     &
-!GOMP                               wt_accel2,n,eta_PF_BT,interp_eta_PF,wt_end,      &
-!GOMP                               Instep,eta_PF,eta_PF_1,d_eta_PF,                 &
-!GOMP                               apply_OBC_flather,ubt_old,vbt_old )
+    !GOMP parallel default(none) shared(CS,isv,iev,jsv,jev,project_velocity,use_BT_cont, &
+    !GOMP                               uhbt,vhbt,ubt,BTCL_u,uhbt0,vbt,BTCL_v,vhbt0,     &
+    !GOMP                               eta_pred,eta,eta_src,dtbt,Datu,Datv,p_surf_dyn,  &
+    !GOMP                               dyn_coef_eta,find_etaav,is,ie,js,je,eta_sum,     &
+    !GOMP                               wt_accel2,n,eta_PF_BT,interp_eta_PF,wt_end,      &
+    !GOMP                               Instep,eta_PF,eta_PF_1,d_eta_PF,                 &
+    !GOMP                               apply_OBC_flather,ubt_old,vbt_old )
     if (CS%dynamic_psurf .or. .not.project_velocity) then
       if (use_BT_cont) then
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do I=isv-2,iev+1
           uhbt(I,j) = find_uhbt(ubt(I,j),BTCL_u(I,j)) + uhbt0(I,j)
         enddo ; enddo
-!GOMP do
+        !GOMP do
         do J=jsv-2,jev+1 ; do i=isv-1,iev+1
           vhbt(i,J) = find_vhbt(vbt(i,J),BTCL_v(i,J)) + vhbt0(i,J)
         enddo ; enddo
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
                      ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
         enddo ; enddo
       else
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
               (((Datu(I-1,j)*ubt(I-1,j) + uhbt0(I-1,j)) - &
@@ -1614,7 +1614,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%dynamic_psurf) then
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           p_surf_dyn(i,j) = dyn_coef_eta(i,j) * (eta_pred(i,j) - eta(i,j))
         enddo ; enddo
@@ -1625,7 +1625,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !  eta_PF_BT => eta_pred ; if (project_velocity) eta_PF_BT => eta
 
     if (find_etaav) then
-!GOMP do
+      !GOMP do
       do j=js,je ; do i=is,ie
         eta_sum(i,j) = eta_sum(i,j) + wt_accel2(n) * eta_PF_BT(i,j)
       enddo ; enddo
@@ -1633,23 +1633,23 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     if (interp_eta_PF) then
       wt_end = n*Instep  ! This could be (n-0.5)*Instep.
-!GOMP do
+      !GOMP do
       do j=jsv-1,jev+1 ; do i=isv-1,iev+1
         eta_PF(i,j) = eta_PF_1(i,j) + wt_end*d_eta_PF(i,j)
       enddo ; enddo
     endif
 
     if (apply_OBC_flather .or. apply_OBC_open) then
-!GOMP do
+      !GOMP do
       do j=jsv,jev ; do I=isv-2,iev+1
         ubt_old(I,j) = ubt(I,j)
       enddo ; enddo
-!GOMP do
+      !GOMP do
       do J=jsv-2,jev+1 ; do i=isv,iev
         vbt_old(i,J) = vbt(i,J)
       enddo ; enddo
     endif
-!GOMP end parallel
+    !GOMP end parallel
 
     if (apply_OBCs) then
       if (MOD(n+G%first_direction,2)==1) then
@@ -1659,9 +1659,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! save the old value of ubt and uhbt
-!GOMP parallel do default(none) shared(isv,iev,jsv,jev,ioff,joff,ubt_prev,ubt,uhbt_prev,  &
-!GOMP                                  uhbt,ubt_sum_prev,ubt_sum,uhbt_sum_prev, &
-!GOMP                                  uhbt_sum,ubt_wtd_prev,ubt_wtd)
+        !GOMP parallel do default(none) shared(isv,iev,jsv,jev,ioff,joff,ubt_prev,ubt,uhbt_prev,  &
+        !GOMP                                  uhbt,ubt_sum_prev,ubt_sum,uhbt_sum_prev, &
+        !GOMP                                  uhbt_sum,ubt_wtd_prev,ubt_wtd)
         do J=jsv-joff,jev+joff ; do i=isv-1,iev
           ubt_prev(i,J) = ubt(i,J); uhbt_prev(i,J) = uhbt(i,J)
           ubt_sum_prev(i,J)=ubt_sum(i,J); uhbt_sum_prev(i,J)=uhbt_sum(i,J) ; ubt_wtd_prev(i,J)=ubt_wtd(i,J)
@@ -1669,9 +1669,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! save the old value of vbt and vhbt
-!GOMP parallel do default(none) shared(isv,iev,jsv,jev,ioff,joff,vbt_prev,vbt,vhbt_prev,  &
-!GOMP                                  vhbt,vbt_sum_prev,vbt_sum,vhbt_sum_prev, &
-!GOMP                                  vhbt_sum,vbt_wtd_prev,vbt_wtd)
+        !GOMP parallel do default(none) shared(isv,iev,jsv,jev,ioff,joff,vbt_prev,vbt,vhbt_prev,  &
+        !GOMP                                  vhbt,vbt_sum_prev,vbt_sum,vhbt_sum_prev, &
+        !GOMP                                  vhbt_sum,vbt_wtd_prev,vbt_wtd)
         do J=jsv-1,jev ; do i=isv-ioff,iev+ioff
           vbt_prev(i,J) = vbt(i,J); vhbt_prev(i,J) = vhbt(i,J)
           vbt_sum_prev(i,J)=vbt_sum(i,J); vhbt_sum_prev(i,J)=vhbt_sum(i,J) ; vbt_wtd_prev(i,J) = vbt_wtd(i,J)
@@ -1679,10 +1679,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
     endif
 
-!GOMP parallel default(shared) private(vel_prev)
+    !GOMP parallel default(shared) private(vel_prev)
     if (MOD(n+G%first_direction,2)==1) then
       ! On odd-steps, update v first.
-!GOMP do
+      !GOMP do
       do J=jsv-1,jev ; do i=isv-1,iev+1
         Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -1691,19 +1691,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                    dgeo_de * CS%IdyCv(i,J)
       enddo ; enddo
       if (CS%dynamic_psurf) then
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv-1,iev+1
           PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS%IdyCv(i,J)
         enddo ; enddo
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           PFv(i,J) = 0.0
         endif ; enddo ; enddo
       endif
-!GOMP do
+      !GOMP do
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
@@ -1719,24 +1719,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
 
       if (use_BT_cont) then
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = find_vhbt(vbt_trans(i,J),BTCL_v(i,J)) + vhbt0(i,J)
         enddo ; enddo
       else
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = Datv(i,J)*vbt_trans(i,J) + vhbt0(i,J)
         enddo ; enddo
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J); vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
       endif
       ! Now update the zonal velocity.
-!GOMP do
+      !GOMP do
       do j=jsv,jev ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) + dzon(I,j) * vbt(i+1,J-1))) - &
@@ -1747,19 +1747,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
 
       if (CS%dynamic_psurf) then
-!GOMP do
+        !GOMP do
         do j=jsv,jev ; do I=isv-1,iev
           PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS%IdxCu(I,j)
         enddo ; enddo
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
-!GOMP do
+        !GOMP do
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
         endif ; enddo ; enddo
       endif
-!GOMP do
+      !GOMP do
       do j=jsv,jev ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
@@ -1776,25 +1776,25 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
 
       if (use_BT_cont) then
-!GOMP do
+        !GOMP do
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j)) + uhbt0(I,j)
         enddo ; enddo
       else
-!GOMP do
+        !GOMP do
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
       endif
      if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
-!GOMP do
+        !GOMP do
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
       endif
     else
       ! On even steps, update u first.
-!GOMP do
+      !GOMP do
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) +  dzon(I,j) * vbt(i+1,J-1))) - &
@@ -1805,20 +1805,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
 
       if (CS%dynamic_psurf) then
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS%IdxCu(I,j)
         enddo ; enddo
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
-!GOMP do
+        !GOMP do
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
         endif ; enddo ; enddo
       endif
 
-!GOMP do
+      !GOMP do
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
@@ -1834,18 +1834,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
 
       if (use_BT_cont) then
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j),BTCL_u(I,j)) + uhbt0(I,j)
         enddo ; enddo
       else
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
       endif
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
-!GOMP do
+        !GOMP do
         do j=jsv-1,jev+1 ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
@@ -1853,7 +1853,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       ! Now update the meridional velocity.
       if (CS%use_old_coriolis_bracket_bug) then
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv,iev
           Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + bmer(I,j) * ubt(I,j)) + &
                   (cmer(I,j+1) * ubt(I,j+1) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -1862,7 +1862,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                       dgeo_de * CS%IdyCv(i,J)
         enddo ; enddo
       else
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv,iev
           Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                   (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -1873,20 +1873,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%dynamic_psurf) then
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv,iev
           PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS%IdyCv(i,J)
         enddo ; enddo
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           PFv(i,J) = 0.0
         endif ; enddo ; enddo
       endif
 
-!GOMP do
+      !GOMP do
       do J=jsv-1,jev ; do i=isv,iev
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
@@ -1902,70 +1902,70 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif
       enddo ; enddo
       if (use_BT_cont) then
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv,iev
           vhbt(i,J) = find_vhbt(vbt_trans(i,J),BTCL_v(i,J)) + vhbt0(i,J)
         enddo ; enddo
       else
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv,iev
           vhbt(i,J) = Datv(i,J)*vbt_trans(i,J) + vhbt0(i,J)
         enddo ; enddo
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
-!GOMP do
+        !GOMP do
         do J=jsv-1,jev ; do i=isv,iev ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J); vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
       endif
     endif
-!GOMP end parallel
+    !GOMP end parallel
 
-!GOMP parallel default(none) shared(is,ie,js,je,find_PF,PFu_bt_sum,wt_accel2, &
-!GOMP                               PFu,PFv_bt_sum,PFv,find_Cor,Coru_bt_sum,  &
-!GOMP                               Cor_u,Corv_bt_sum,Cor_v,ubt_sum,wt_trans, &
-!GOMP                               ubt_trans,uhbt_sum,uhbt,ubt_wtd,wt_vel,   &
-!GOMP                               ubt,vbt_sum,vbt_trans,vhbt_sum,vhbt,      &
-!GOMP                               vbt_wtd,vbt,n )
+    !GOMP parallel default(none) shared(is,ie,js,je,find_PF,PFu_bt_sum,wt_accel2, &
+    !GOMP                               PFu,PFv_bt_sum,PFv,find_Cor,Coru_bt_sum,  &
+    !GOMP                               Cor_u,Corv_bt_sum,Cor_v,ubt_sum,wt_trans, &
+    !GOMP                               ubt_trans,uhbt_sum,uhbt,ubt_wtd,wt_vel,   &
+    !GOMP                               ubt,vbt_sum,vbt_trans,vhbt_sum,vhbt,      &
+    !GOMP                               vbt_wtd,vbt,n )
     if (find_PF) then
-!GOMP do
+      !GOMP do
       do j=js,je ; do I=is-1,ie
         PFu_bt_sum(I,j)  = PFu_bt_sum(I,j) + wt_accel2(n) * PFu(I,j)
       enddo ; enddo
-!GOMP do
+      !GOMP do
       do J=js-1,je ; do i=is,ie
         PFv_bt_sum(i,J)  = PFv_bt_sum(i,J) + wt_accel2(n) * PFv(i,J)
       enddo ; enddo
     endif
     if (find_Cor) then
-!GOMP do
+      !GOMP do
       do j=js,je ; do I=is-1,ie
         Coru_bt_sum(I,j) = Coru_bt_sum(I,j) + wt_accel2(n) * Cor_u(I,j)
       enddo ; enddo
-!GOMP do
+      !GOMP do
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) + wt_accel2(n) * Cor_v(i,J)
       enddo ; enddo
     endif
 
-!GOMP do
+    !GOMP do
     do j=js,je ; do I=is-1,ie
       ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
       uhbt_sum(I,j) = uhbt_sum(I,j) + wt_trans(n) * uhbt(I,j)
       ubt_wtd(I,j) = ubt_wtd(I,j) + wt_vel(n) * ubt(I,j)
     enddo ; enddo
-!GOMP do
+    !GOMP do
     do J=js-1,je ; do i=is,ie
       vbt_sum(i,J) = vbt_sum(i,J) + wt_trans(n) * vbt_trans(i,J)
       vhbt_sum(i,J) = vhbt_sum(i,J) + wt_trans(n) * vhbt(i,J)
       vbt_wtd(i,J) = vbt_wtd(i,J) + wt_vel(n) * vbt(i,J)
     enddo ; enddo
-!GOMP end parallel
+    !GOMP end parallel
 
     if (apply_OBCs) then
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
-!GOMP parallel do default(none) shared(is,ie,js,je,ubt_sum_prev,ubt_sum,uhbt_sum_prev,&
-!GOMP                                  uhbt_sum,ubt_wtd_prev,ubt_wtd)
+        !GOMP parallel do default(none) shared(is,ie,js,je,ubt_sum_prev,ubt_sum,uhbt_sum_prev,&
+        !GOMP                                  uhbt_sum,ubt_wtd_prev,ubt_wtd)
         do j=js,je ; do I=is-1,ie
           if (OBC%segnum_u(I,j) /= OBC_NONE) then
             ubt_sum(I,j)=ubt_sum_prev(I,j); uhbt_sum(I,j)=uhbt_sum_prev(I,j) ; ubt_wtd(I,j)=ubt_wtd_prev(I,j)
@@ -1974,8 +1974,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
-!GOMP parallel do default(none) shared(is,ie,js,je,vbt_sum_prev,vbt_sum,vhbt_sum_prev, &
-!GOMP                                  vhbt_sum,vbt_wtd_prev,vbt_wtd)
+        !GOMP parallel do default(none) shared(is,ie,js,je,vbt_sum_prev,vbt_sum,vhbt_sum_prev, &
+        !GOMP                                  vhbt_sum,vbt_wtd_prev,vbt_wtd)
         do J=js-1,je ; do I=is,ie
           if (OBC%segnum_v(i,J) /= OBC_NONE) then
             vbt_sum(i,J)=vbt_sum_prev(i,J); vhbt_sum(i,J)=vhbt_sum_prev(i,J) ; vbt_wtd(i,J)=vbt_wtd_prev(i,J)
@@ -2008,7 +2008,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                     CS%debug_BT_HI, haloshift=iev-ie, scale=GV%H_to_m)
     endif
 
-!$OMP parallel do default(none) shared(isv,iev,jsv,jev,n,eta,eta_src,dtbt,CS,uhbt,vhbt,eta_wtd,wt_eta)
+    !$OMP parallel do default(none) shared(isv,iev,jsv,jev,n,eta,eta_src,dtbt,CS,uhbt,vhbt,eta_wtd,wt_eta)
     do j=jsv,jev ; do i=isv,iev
       eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
                  ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
