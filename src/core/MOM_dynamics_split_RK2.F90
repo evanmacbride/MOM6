@@ -344,6 +344,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   showCallTree = callTree_showQuery()
   if (showCallTree) call callTree_enter("step_MOM_dyn_split_RK2(), MOM_dynamics_split_RK2.F90")
 
+  !GDD acc this loop?
   !$OMP parallel do default(shared)
   do k = 1, nz
     do j=G%jsd,G%jed   ; do i=G%isdB,G%iedB ;  up(i,j,k) = 0.0 ; enddo ; enddo
@@ -372,6 +373,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (associated(CS%OBC)) then
     if (CS%debug_OBC) call open_boundary_test_extern_h(G, CS%OBC, h)
 
+    !GDD: acc this loop?
     do k=1,nz ; do j=G%jsd,G%jed ; do I=G%IsdB,G%IedB
       u_old_rad_OBC(I,j,k) = u_av(I,j,k)
     enddo ; enddo ; enddo
@@ -414,10 +416,12 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 ! pbce = dM/deta
   if (CS%begw == 0.0) call enable_averaging(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
+  !GDD: acc this func?
   call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
                      CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
   if (dyn_p_surf) then
     Pa_to_eta = 1.0 / GV%H_to_Pa
+    !GDD: acc this loop?
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       eta_PF_start(i,j) = CS%eta_PF(i,j) - Pa_to_eta * &
@@ -439,6 +443,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! CAu = -(f+zeta_av)/h_av vh + d/dx KE_av
   call cpu_clock_begin(id_clock_Cor)
+  !GDD: acc this func?
   call CorAdCalc(u_av, v_av, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
                  G, Gv, US, CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
@@ -446,6 +451,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! u_bc_accel = CAu + PFu + diffu(u[n-1])
   call cpu_clock_begin(id_clock_btforce)
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz
     do j=js,je ; do I=Isq,Ieq
@@ -471,6 +477,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   endif
 
   call cpu_clock_begin(id_clock_vertvisc)
+  !GDD acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz
     do j=js,je ; do I=Isq,Ieq
@@ -482,6 +489,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   enddo
 
   call enable_averaging(dt, Time_local, CS%diag)
+  !GDD: acc this func?
   call set_viscous_ML(u, v, h, tv, forces, visc, dt, G, GV, US, &
                       CS%set_visc_CSp)
   call disable_averaging(CS%diag)
@@ -489,7 +497,9 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (CS%debug) then
     call uvchksum("before vertvisc: up", up, vp, G%HI, haloshift=0, symmetric=sym)
   endif
+  !GDD: acc this func?
   call vertvisc_coef(up, vp, h, forces, visc, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC)
+  !GDD: acc this func?
   call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, CS%vertvisc_CSp)
   call cpu_clock_end(id_clock_vertvisc)
   if (showCallTree) call callTree_wayPoint("done with vertvisc_coef (step_MOM_dyn_split_RK2)")
@@ -508,7 +518,9 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   call cpu_clock_begin(id_clock_btcalc)
   ! Calculate the relative layer weights for determining barotropic quantities.
   if (.not.BT_cont_BT_thick) &
+    !GDD: acc this func?
     call btcalc(h, G, GV, CS%barotropic_CSp, OBC=CS%OBC)
+  !GDD: acc this func?
   call bt_mass_source(h, eta, .true., G, GV, CS%barotropic_CSp)
   call cpu_clock_end(id_clock_btcalc)
 
@@ -518,6 +530,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 ! u_accel_bt = layer accelerations due to barotropic solver
   if (associated(CS%BT_cont) .or. CS%BT_use_layer_fluxes) then
     call cpu_clock_begin(id_clock_continuity)
+    !GDD: acc this func?
     call continuity(u, v, h, hp, uh_in, vh_in, dt, G, GV, &
                     CS%continuity_CSp, OBC=CS%OBC, visc_rem_u=CS%visc_rem_u, &
                     visc_rem_v=CS%visc_rem_v, BT_cont=CS%BT_cont)
@@ -538,6 +551,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (calc_dtbt) call set_dtbt(G, GV, US, CS%barotropic_CSp, eta, CS%pbce)
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the predictor step call to btstep.
+  !GDD: acc this func?
   call btstep(u, v, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, &
               u_av, v_av, CS%u_accel_bt, CS%v_accel_bt, eta_pred, CS%uhbt, CS%vhbt, &
               G, GV, US, CS%barotropic_CSp, CS%visc_rem_u, CS%visc_rem_v, &
@@ -551,6 +565,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   dt_pred = dt * CS%be
   call cpu_clock_begin(id_clock_mom_update)
 
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz
     do J=Jsq,Jeq ; do i=is,ie
@@ -584,8 +599,10 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (CS%debug) then
     call uvchksum("0 before vertvisc: [uv]p", up, vp, G%HI,haloshift=0, symmetric=sym)
   endif
+  !GDD: acc this func?
   call vertvisc_coef(up, vp, h, forces, visc, dt_pred, G, GV, US, CS%vertvisc_CSp, &
                      CS%OBC)
+  !GDD: acc this func?
   call vertvisc(up, vp, h, forces, visc, dt_pred, CS%OBC, CS%ADp, CS%CDp, G, &
                 GV, US, CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot, waves=waves)
   if (showCallTree) call callTree_wayPoint("done with vertvisc (step_MOM_dyn_split_RK2)")
@@ -594,6 +611,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
     call start_group_pass(CS%pass_uvp, G%Domain, clock=id_clock_pass)
     call cpu_clock_begin(id_clock_vertvisc)
   endif
+  !GDD: acc this func?
   call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt_pred, G, GV, CS%vertvisc_CSp)
   call cpu_clock_end(id_clock_vertvisc)
 
@@ -607,6 +625,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   ! uh = u_av * h
   ! hp = h + dt * div . uh
   call cpu_clock_begin(id_clock_continuity)
+  !GDD: acc this func
   call continuity(up, vp, h, hp, uh, vh, dt, G, GV, CS%continuity_CSp, &
                   CS%uhbt, CS%vhbt, CS%OBC, CS%visc_rem_u, CS%visc_rem_v, &
                   u_av, v_av, BT_cont=CS%BT_cont)
@@ -634,6 +653,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   endif
 
   ! h_av = (h + hp)/2
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
     h_av(i,j,k) = 0.5*(h(i,j,k) + hp(i,j,k))
@@ -647,6 +667,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   ! hp can be changed if CS%begw /= 0.
   ! eta_cor = ...                 (hidden inside CS%barotropic_CSp)
   call cpu_clock_begin(id_clock_btcalc)
+  !GDD: acc this func?
   call bt_mass_source(hp, eta_pred, .false., G, GV, CS%barotropic_CSp)
   call cpu_clock_end(id_clock_btcalc)
 
@@ -654,6 +675,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
     ! hp <- (1-begw)*h_in + begw*hp
     ! Back up hp to the value it would have had after a time-step of
     ! begw*dt.  hp is not used again until recalculated by continuity.
+    !GDD: acc this loop?
     !$OMP parallel do default(shared)
     do k=1,nz ; do j=js-1,je+1 ; do i=is-1,ie+1
       hp(i,j,k) = (1.0-CS%begw)*h(i,j,k) + CS%begw*hp(i,j,k)
@@ -662,6 +684,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
     ! PFu = d/dx M(hp,T,S)
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
+    ! GDD: acc this func?
     call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
                        CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
     call cpu_clock_end(id_clock_pres)
@@ -688,6 +711,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! diffu = horizontal viscosity terms (u_av)
   call cpu_clock_begin(id_clock_horvisc)
+  !GDD: acc this func?
   call horizontal_viscosity(u_av, v_av, h_av, CS%diffu, CS%diffv, &
                             MEKE, Varmix, G, GV, US, CS%hor_visc_CSp, &
                             OBC=CS%OBC, BT=CS%barotropic_CSp)
@@ -696,6 +720,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! CAu = -(f+zeta_av)/h_av vh + d/dx KE_av
   call cpu_clock_begin(id_clock_Cor)
+  !GDD: acc this function?
   call CorAdCalc(u_av, v_av, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
                  G, GV, US, CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
@@ -705,6 +730,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! u_bc_accel = CAu + PFu + diffu(u[n-1])
   call cpu_clock_begin(id_clock_btforce)
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz
     do j=js,je ; do I=Isq,Ieq
@@ -738,6 +764,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the corrector step call to btstep.
+  !GDD: acc this function?
   call btstep(u, v, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, &
               CS%eta_PF, u_av, v_av, CS%u_accel_bt, CS%v_accel_bt, &
               eta_pred, CS%uhbt, CS%vhbt, G, GV, US, CS%barotropic_CSp, &
@@ -745,6 +772,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
               BT_cont = CS%BT_cont, eta_PF_start=eta_PF_start, &
               taux_bot=taux_bot, tauy_bot=tauy_bot, &
               uh0=uh_ptr, vh0=vh_ptr, u_uh0=u_ptr, v_vh0=v_ptr)
+  !GDD: acc this loop?
   do j=js,je ; do i=is,ie ; eta(i,j) = eta_pred(i,j) ; enddo ; enddo
   call cpu_clock_end(id_clock_btstep)
   if (showCallTree) call callTree_leave("btstep()")
@@ -755,6 +783,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
   ! u = u + dt*( u_bc_accel + u_accel_bt )
   call cpu_clock_begin(id_clock_mom_update)
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz
     do j=js,je ; do I=Isq,Ieq
@@ -795,6 +824,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (showCallTree) call callTree_wayPoint("done with vertvisc (step_MOM_dyn_split_RK2)")
 
 ! Later, h_av = (h_in + h_out)/2, but for now use h_av to store h_in.
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
     h_av(i,j,k) = h(i,j,k)
@@ -832,6 +862,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   endif
 
 ! h_av = (h_in + h_out)/2 . Going in to this line, h_av = h_in.
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
     h_av(i,j,k) = 0.5*(h_av(i,j,k) + h(i,j,k))
@@ -840,6 +871,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (G%nonblocking_updates) &
     call complete_group_pass(CS%pass_av_uvh, G%Domain, clock=id_clock_pass)
 
+  !GDD: acc this loop?
   !$OMP parallel do default(shared)
   do k=1,nz
     do j=js-2,je+2 ; do I=Isq-2,Ieq+2
