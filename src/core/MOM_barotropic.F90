@@ -643,6 +643,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
 
+  ! GDD: Temporary Arrays for GPU porting
+  ! naming convention: use _g for these temps ex: "CS_q_gpu"
+  real, dimension(SZIW_(CS),SZJW_(CS)) :: CS_IdxCu_gpu, CS_IdyCv_gpu
+  real, dimension(SZIBW_(CS),SZJW_(CS)) :: OBC_segnum_u_gpu, OBC_segnum_v_gpu
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
   if (.not.CS%split) return
@@ -915,8 +919,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! including the viscous remnant.
   !$OMP parallel do default(shared)
   !GDD added OpenACC loop directive
-  !$acc parallel loop
+  !print *, "GDD 922: j=", je+1 - js-1, "i=", ie - is-1
+  !$acc parallel loop collapse(2)
   do j=js-1,je+1 ; do I=is-1,ie ; ubt_Cor(I,j) = 0.0 ; enddo ; enddo
+  !$acc end parallel 
   !$OMP parallel do default(shared)
   do J=js-1,je ; do i=is-1,ie+1 ; vbt_Cor(i,J) = 0.0 ; enddo ; enddo
   !$OMP parallel do default(shared)
@@ -1957,22 +1963,34 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (apply_OBCs) then
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP parallel do default(shared)
-        do j=js,je ; do I=is-1,ie
-          if (OBC%segnum_u(I,j) /= OBC_NONE) then
-            ubt_sum(I,j) = ubt_sum_prev(I,j) ; uhbt_sum(I,j) = uhbt_sum_prev(I,j)
-            ubt_wtd(I,j) = ubt_wtd_prev(I,j)
-          endif
-        enddo ; enddo
+        ! GDD adding OpenACC
+        OBC_segnum_u_gpu = OBC%segnum_u
+        !print *, "GDD: 1968: j=", je - js, "i=", ie - (is-1)
+        !$acc parallel loop collapse(2)
+        do j=js,je 
+          do I=is-1,ie
+            if (OBC_segnum_u_gpu(I,j) /= OBC_NONE) then
+              ubt_sum(I,j) = ubt_sum_prev(I,j) ; uhbt_sum(I,j) = uhbt_sum_prev(I,j)
+              ubt_wtd(I,j) = ubt_wtd_prev(I,j)
+            endif
+          enddo
+        enddo
+        !$acc end parallel
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP parallel do default(shared)
+        ! GDD adding OpenACC
+        OBC_segnum_v_gpu = OBC%segnum_v
+        !print *, "GDD: 1985: j=", je - (js-1), "i=", ie - is
+        !$acc parallel loop collapse(2)
         do J=js-1,je ; do I=is,ie
-          if (OBC%segnum_v(i,J) /= OBC_NONE) then
+          if (OBC_segnum_v_gpu(i,J) /= OBC_NONE) then
             vbt_sum(i,J) = vbt_sum_prev(i,J) ; vhbt_sum(i,J) = vhbt_sum_prev(i,J)
             vbt_wtd(i,J) = vbt_wtd_prev(i,J)
           endif
         enddo ; enddo
+        !$acc end parallel
       endif
 
       call apply_velocity_OBCs(OBC, ubt, vbt, uhbt, vhbt, &
@@ -2121,30 +2139,47 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Now calculate each layer's accelerations.
   !$OMP parallel do default(shared)
+  ! GDD adding OpenACC split k level loop into two separate loops
+  CS_IdxCu_gpu = CS%IdxCu !GDD added
+  !print *, "GDD: 2144: k=", nz-1, " j=", je - js, "i=", ie - (is - 1)
+  !$acc parallel loop collapse(3)
   do k=1,nz
     do j=js,je ; do I=is-1,ie
       accel_layer_u(I,j,k) = (u_accel_bt(I,j) - &
            ((pbce(i+1,j,k) - gtot_W(i+1,j)) * e_anom(i+1,j) - &
-            (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS%IdxCu(I,j) )
+            (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS_IdxCu_gpu(I,j) )
       if (abs(accel_layer_u(I,j,k)) < accel_underflow) accel_layer_u(I,j,k) = 0.0
     enddo ; enddo
+  enddo
+  !$acc end parallel
+  CS_IdyCv_gpu = CS%IdyCv
+  !print *, "GDD: 2156: k=", nz-1, " j=", je - (js-1), "i=", ie - (is)
+  !$acc parallel loop collapse(3)
+  do k = 1,nz
     do J=js-1,je ; do i=is,ie
       accel_layer_v(i,J,k) = (v_accel_bt(i,J) - &
            ((pbce(i,j+1,k) - gtot_S(i,j+1)) * e_anom(i,j+1) - &
-            (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS%IdyCv(i,J) )
+            (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS_IdyCv_gpu(i,J) )
       if (abs(accel_layer_v(i,J,k)) < accel_underflow) accel_layer_v(i,J,k) = 0.0
     enddo ; enddo
   enddo
+  !$acc end parallel 
 
   if (apply_OBCs) then
     ! Correct the accelerations at OBC velocity points, but only in the
     ! symmetric-memory computational domain, not in the wide halo regions.
-    if (CS%BT_OBC%apply_u_OBCs) then ; do j=js,je ; do I=is-1,ie
-      if (OBC%segnum_u(I,j) /= OBC_NONE) then
-        u_accel_bt(I,j) = (ubt_wtd(I,j) - ubt_first(I,j)) / dt
-        do k=1,nz ; accel_layer_u(I,j,k) = u_accel_bt(I,j) ; enddo
-      endif
-    enddo ; enddo ; endif
+    if (CS%BT_OBC%apply_u_OBCs) then ;
+      ! GDD adding OpenACC
+      print *, "GDD: 2173: j=", je - js, "i=", ie - (is - 1)
+      !$acc parallel loop collapse(2)
+      do j=js,je ; do I=is-1,ie
+        if (OBC_segnum_u_gpu(I,j) /= OBC_NONE) then
+          u_accel_bt(I,j) = (ubt_wtd(I,j) - ubt_first(I,j)) / dt
+          do k=1,nz ; accel_layer_u(I,j,k) = u_accel_bt(I,j) ; enddo
+        endif
+      enddo ; enddo
+      !$acc end parallel
+    endif
     if (CS%BT_OBC%apply_v_OBCs) then ; do J=js-1,je ; do i=is,ie
       if (OBC%segnum_v(i,J) /= OBC_NONE) then
         v_accel_bt(i,J) = (vbt_wtd(i,J) - vbt_first(i,J)) / dt
