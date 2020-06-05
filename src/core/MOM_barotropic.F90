@@ -3159,8 +3159,8 @@ subroutine btcalc(h, G, GV, CS, h_u, h_v, may_use_default, OBC)
 end subroutine btcalc
 
 !> The function find_uhbt determines the zonal transport for a given velocity.
-!$acc routine bind(find_uhbt_nvidia)
 function find_uhbt(u, BTC, US) result(uhbt)
+  !$acc routine seq
   real, intent(in) :: u    !< The local zonal velocity [L T-1 ~> m s-1]
   type(local_BT_cont_u_type), intent(in) :: BTC !< A structure containing various fields that
                            !! allow the barotropic transports to be calculated consistently
@@ -3303,8 +3303,8 @@ function uhbt_to_ubt(uhbt, BTC, US, guess) result(ubt)
 end function uhbt_to_ubt
 
 !> The function find_vhbt determines the meridional transport for a given velocity.
-!$acc routine bind(find_vhbt_nvidia)
 function find_vhbt(v, BTC, US) result(vhbt)
+  !$acc routine seq
   real, intent(in) :: v    !< The local meridional velocity [L T-1 ~> m s-1]
   type(local_BT_cont_v_type), intent(in) :: BTC !< A structure containing various fields that
                            !! allow the barotropic transports to be calculated consistently
