@@ -643,6 +643,86 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
 
+  !_________________Temporary Arrays for GPU porting_________________________
+  !Naming: use _gpu for these temps ex: "CS_q_gpu"
+  !CS%linear_wave_drag
+  logical :: CS_linear_wave_drag_gpu
+  real :: CS_vel_underflow_gpu 
+  real, allocatable, dimension(:,:) :: &
+    CS_IdxCu_gpu, CS_IdyCv_gpu, CS_IareaT_gpu, &
+    CS_ubtav_gpu, CS_vbtav_gpu, &
+    CS_ubt_IC_gpu, CS_vbt_IC_gpu, &
+    CS_uhbt_IC_gpu, CS_vhbt_IC_gpu
+  real, allocatable, dimension(:,:) :: &
+    OBC_segnum_v_gpu, OBC_segnum_u_gpu!, &
+    !OBC_segment_v_direction, OBC_segment_u_direction
+    ! OBC_segment access causes seg fault error and isn't
+    ! being used in any of the code run by our test cases
+
+  !print *, "GDD temp start"
+
+  CS_linear_wave_drag_gpu = CS%linear_wave_drag
+  CS_vel_underflow_gpu = CS%vel_underflow
+  !allocate a temporary array (workaround for structures)
+  allocate(CS_IdxCu_gpu(size(CS%IdxCu,1), size(CS%IdxCu,2)))
+  !print *, "post CS_IdxCu" 
+  allocate(CS_IdyCv_gpu(size(CS%IdyCv,1), size(CS%IdyCv,2)))
+  !print *, "post CS_IdyCv"
+  allocate(CS_IareaT_gpu(size(CS%IareaT,1), size(CS%IareaT,2)))
+  !print *, "post CS_IareaT"
+  allocate(CS_ubtav_gpu(size(CS%ubtav,1), size(CS%ubtav,2)))  
+  !print *, "post CS_ubtav"
+  allocate(CS_vbtav_gpu(size(CS%vbtav,1), size(CS%vbtav,2)))
+  !print *, "post CS_vbtav"
+  allocate(CS_ubt_IC_gpu(size(CS%ubt_IC,1), size(CS%ubt_IC,2)))
+  !print *, "post CS_ubt_IC"
+  allocate(CS_vbt_IC_gpu(size(CS%vbt_IC,1), size(CS%vbt_IC,2)))
+  !print *, "post CS_vbt_IC"
+  allocate(CS_uhbt_IC_gpu(size(CS%uhbt_IC,1), size(CS%uhbt_IC,2)))
+  !print *, "post CS_uhbt_IC"
+  allocate(CS_vhbt_IC_gpu(size(CS%vhbt_IC,1), size(CS%vhbt_IC,2)))
+  !print *, "post CS_vhbt_IC"
+
+  !Copy data to the temporary array
+  !index using dimension size coordinants
+  do i=1,size(CS%IdxCu,1); do j=1,size(CS%IdxCu,2)
+    CS_IdxCu_gpu(i,j)=CS%IdxCu(i,j)
+  enddo;enddo
+
+  do i=1,size(CS%IdyCv,1); do j=1,size(CS%IdyCv,2)
+    CS_IdyCv_gpu(i,j)=CS%IdyCv(i,j)
+  enddo;enddo
+
+  do i=1,size(CS%IareaT,1); do j=1,size(CS%IareaT,2)
+    CS_IareaT_gpu(i,j) = CS%IareaT(i,j)
+  enddo;enddo
+
+  do i=1,size(CS%ubtav,1); do j=1,size(CS%ubtav,2)
+    CS_ubtav_gpu(i,j) = CS%ubtav(i,j)
+  enddo;enddo
+
+  do i=1,size(CS%vbtav,1); do j=1,size(CS%vbtav,2)
+    CS_vbtav_gpu(i,j) = CS%vbtav(i,j)
+  enddo;enddo
+
+  do i=1,size(CS%ubt_IC,1); do j=1,size(CS%ubt_IC,2)
+    CS_ubt_IC_gpu(i,j) = CS%ubt_IC(i,j)
+  enddo; enddo
+
+  do i=1,size(CS%vbt_IC,1); do j=1,size(CS%vbt_IC,2)
+    CS_vbt_IC_gpu(i,j) = CS%vbt_IC(i,j)
+  enddo; enddo
+
+  do i=1,size(CS%uhbt_IC,1); do j=1,size(CS%uhbt_IC,2)
+    CS_uhbt_IC_gpu(i,j) = CS%uhbt_IC(i,j)
+  enddo; enddo
+
+  do i=1,size(CS%vhbt_IC,1); do j=1,size(CS%vhbt_IC,2)
+    CS_vhbt_IC_gpu(i,j) = CS%vhbt_IC(i,j)
+  enddo; enddo
+  !!____________________End of Temp Arrays______________________________
+
+
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
   if (.not.CS%split) return
@@ -974,6 +1054,21 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (apply_OBCs) then
     call set_up_BT_OBC(OBC, eta, CS%BT_OBC, CS%BT_Domain, G, GV, US, MS, ievf-ie, use_BT_cont, &
                        Datu, Datv, BTCL_u, BTCL_v)
+
+    !!_________________Temporary Arrays for GPU porting_________________________
+    !allocate(OBC_segnum_v_gpu(size(OBC%segnum_v,1),size(OBC%segnum_v,2)))
+    !print *, "post OBC_segnum_v"
+    !allocate(OBC_segnum_u_gpu(size(OBC%segnum_u,1),size(OBC%segnum_u,2)))
+    !print *, "post OBC_segnum_u"
+
+    !do i=1,size(OBC%segnum_v,1);do j=1,size(OBC%segnum_v,2)
+    !  OBC_segnum_v_gpu(i,j) = OBC%segnum_v(i,j)
+    !enddo;enddo
+
+    !do i=1,size(OBC%segnum_u,1);do j=1,size(OBC%segnum_u,2)
+    !  OBC_segnum_u_gpu(i,j) = OBC%segnum_u(i,j)
+    !enddo;enddo
+    !!____________________End of Temp Arrays______________________________ 
   endif
 
 !   Here the vertical average accelerations due to the Coriolis, advective,
@@ -1714,204 +1809,304 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (use_BT_cont) then
         !GOMP do
+        !GDD OpenACC added
+        !print *, "GDD inside v update and use_BT_cont line 1799"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = find_vhbt(vbt_trans(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo
+        !$acc end parallel
       else
         !GOMP do
+        !GDD OpenACC added
+        print *, "GDD inside v update and else of use_BT_cont line 1808"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = Datv(i,J)*vbt_trans(i,J) + vhbt0(i,J)
         enddo ; enddo
+        !$acc end parallel
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP do
+        !GDD OpenACC added
+        !print *, "GDD inside v update and (CS%BT_OBC%apply_v_OBCs) line 1818"
+        !!$acc parallel loop
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J) ; vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
       ! Now update the zonal velocity.
       !GOMP do
+      !GDD added
+      !print *, "GDD inside v update line 1828"
+      !$acc parallel loop
       do j=jsv,jev ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) + dzon(I,j) * vbt(i+1,J-1))) - &
                      Cor_ref_u(I,j)
         PFu(I,j) = ((eta_PF_BT(i,j)-eta_PF(i,j))*gtot_E(i,j) - &
                      (eta_PF_BT(i+1,j)-eta_PF(i+1,j))*gtot_W(i+1,j)) * &
-                    dgeo_de * CS%IdxCu(I,j)
+                    dgeo_de * CS_IdxCu_gpu(I,j)
       enddo ; enddo
+      !$acc end parallel
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        !GDD added
+        print *, "GDD inside v update and CS%dynamic_psurf line 1843"
+        !$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev
-          PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS%IdxCu(I,j)
+          PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS_IdxCu_gpu(I,j)
         enddo ; enddo
+        !$acc end parallel
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
         !GOMP do
+        !GDD added
+        !print *, "GDD inside v update and CS%BT_OBC_apply_u_OBCs line 1854"
+        !!$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
       !GOMP do
+      !GDD added
+      !print *, "GDD inside v update line 1863"
+      !$acc parallel loop
       do j=jsv,jev ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
              dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
-        if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
+        if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
 
-        if (CS%linear_wave_drag) then
+        if (CS_linear_wave_drag_gpu) then
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
         else
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         endif
       enddo ; enddo
+      !$acc end parallel
 
       if (use_BT_cont) then
         !GOMP do
+        !GDD added
+        !print *, "GDD inside v update and use_BT_cont line 1884"
+        !$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        !$acc end parallel
       else
         !GOMP do
+        !GDD added
+        print *, "GDD inside v update and else of use_BT_cont line 1893"
+        !$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
+        !$acc end parallel
       endif
      if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
+        !GDD added
+        !print *, "GDD inside v update and (CS%BT_OBC%apply_u_OBCs) line 1903"
+        !!$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
     else
       ! On even steps, update u first.
       !GOMP do
+      !GDD added
+      !print *, "GDD inside u update line 1914"
+      !$acc parallel loop
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) +  dzon(I,j) * vbt(i+1,J-1))) - &
                      Cor_ref_u(I,j)
         PFu(I,j) = ((eta_PF_BT(i,j)-eta_PF(i,j))*gtot_E(i,j) - &
                      (eta_PF_BT(i+1,j)-eta_PF(i+1,j))*gtot_W(i+1,j)) * &
-                     dgeo_de * CS%IdxCu(I,j)
+                     dgeo_de * CS_IdxCu_gpu(I,j)
       enddo ; enddo
+      !$acc end parallel
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        !GDD added
+        print *, "GDD inside u update and CS%dynamic_psurf line 1929"
+        !$acc parallel loop
         do j=jsv-1,jev+1 ; do I=isv-1,iev
-          PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS%IdxCu(I,j)
+          PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS_IdxCu_gpu(I,j)
         enddo ; enddo
+        !$acc end parallel
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
         !GOMP do
+        !GDD added
+        !print *, "GDD inside u update and CS%BT_OBC%apply_u_OBCs line 1940"
+        !!$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
 
       !GOMP do
+      !GDD added
+      !print *, "GDD inside u update line 1950"
+      !$acc parallel loop
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
              dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
-        if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
+        if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
 
-        if (CS%linear_wave_drag) then
+        if (CS_linear_wave_drag_gpu) then
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
         else
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         endif
       enddo ; enddo
+      !$acc end parallel
 
       if (use_BT_cont) then
         !GOMP do
+        !GDD added
+        !print *, "GDD inside u update and use_BT_cont line 1971"
+        !$acc parallel loop
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        !$acc end parallel
       else
         !GOMP do
+        !GDD added
+        print *, "GDD inside u update and else of use_BT_cont line 1980"
+        !$acc parallel loop
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
+        !$acc end parallel
       endif
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
+        !!$acc parallel loop
         do j=jsv-1,jev+1 ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
 
       ! Now update the meridional velocity.
       if (CS%use_old_coriolis_bracket_bug) then
         !GOMP do
+        !GDD added
+        print *, "GDD inside u update and (CS%use_old_coriolis_bracket_bug) line 1998"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv,iev
           Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + bmer(I,j) * ubt(I,j)) + &
                   (cmer(I,j+1) * ubt(I,j+1) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
           PFv(i,J) = ((eta_PF_BT(i,j)-eta_PF(i,j))*gtot_N(i,j) - &
                        (eta_PF_BT(i,j+1)-eta_PF(i,j+1))*gtot_S(i,j+1)) * &
-                      dgeo_de * CS%IdyCv(i,J)
+                      dgeo_de * CS_IdyCv_gpu(i,J)
         enddo ; enddo
+        !$acc end parallel
       else
         !GOMP do
+        !GDD added
+        !print *, "GDD inside u update and else of (CS%use_old_coriolis_bracket_bug) &
+        !          line 2012"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv,iev
           Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                   (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
           PFv(i,J) = ((eta_PF_BT(i,j)-eta_PF(i,j))*gtot_N(i,j) - &
                        (eta_PF_BT(i,j+1)-eta_PF(i,j+1))*gtot_S(i,j+1)) * &
-                      dgeo_de * CS%IdyCv(i,J)
+                      dgeo_de * CS_IdyCv_gpu(i,J)
         enddo ; enddo
+        !$acc end parallel
       endif
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        !GDD added
+        print *, "GDD inside u update and else of CS%dynamic_psurf line 2027"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv,iev
-          PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS%IdyCv(i,J)
+          PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS_IdyCv_gpu(i,J)
         enddo ; enddo
+        !$acc end parallel
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
         !GOMP do
+        !GDD added
+        !print *, "GDD inside u update and else of apply_v_OBCs line 2038"
+        !!$acc parallel loop
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           PFv(i,J) = 0.0
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
 
       !GOMP do
+      !GDD added
+      !print *, "GDD inside u update line 2048"
+      !$acc parallel loop
       do J=jsv-1,jev ; do i=isv,iev
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
              dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
-        if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
+        if (abs(vbt(i,J)) < CS_vel_underflow_gpu) vbt(i,J) = 0.0
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
 
-        if (CS%linear_wave_drag) then
+        if (CS_linear_wave_drag_gpu) then
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
         else
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
         endif
       enddo ; enddo
+      !$acc end parallel
+
       if (use_BT_cont) then
         !GOMP do
+        !GDD added
+        !print *, "GDD inside u update and use_BT_cont line 2069"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv,iev
           vhbt(i,J) = find_vhbt(vbt_trans(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo
+        !$acc end parallel
       else
         !GOMP do
+        !GDD added
+        print *, "GDD inside u update and else of use_BT_cont line 2078"
+        !$acc parallel loop
         do J=jsv-1,jev ; do i=isv,iev
           vhbt(i,J) = Datv(i,J)*vbt_trans(i,J) + vhbt0(i,J)
         enddo ; enddo
+        !$acc end parallel
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP do
+        !GDD added
+        !print *, "GDD inside u update and CS%BT_OBC%apply_v_OBCs line 2088"
+        !!$acc parallel loop
         do J=jsv-1,jev ; do i=isv,iev ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J); vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
+        !!$acc end parallel
       endif
     endif
     !GOMP end parallel
@@ -1919,78 +2114,114 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !GOMP parallel default(shared)
     if (find_PF) then
       !GOMP do
+      !GDD added
+      print *, "GDD inside u update and find_PF line 2102"
+      !$acc parallel
+      !$acc loop
       do j=js,je ; do I=is-1,ie
         PFu_bt_sum(I,j)  = PFu_bt_sum(I,j) + wt_accel2(n) * PFu(I,j)
       enddo ; enddo
       !GOMP do
+      !$acc loop
       do J=js-1,je ; do i=is,ie
         PFv_bt_sum(i,J)  = PFv_bt_sum(i,J) + wt_accel2(n) * PFv(i,J)
       enddo ; enddo
+      !$acc end parallel
     endif
     if (find_Cor) then
       !GOMP do
+      !GDD added
+      print *, "GDD inside u update and find_Cor line 2118"
+      !$acc parallel
+      !$acc loop
       do j=js,je ; do I=is-1,ie
         Coru_bt_sum(I,j) = Coru_bt_sum(I,j) + wt_accel2(n) * Cor_u(I,j)
       enddo ; enddo
       !GOMP do
+      !$acc loop
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) + wt_accel2(n) * Cor_v(i,J)
       enddo ; enddo
+      !$acc end parallel
     endif
 
     !GOMP do
+    !GDD added
+    !print *, "GDD line 2134"
+    !$acc parallel
+    !$acc loop
     do j=js,je ; do I=is-1,ie
       ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
       uhbt_sum(I,j) = uhbt_sum(I,j) + wt_trans(n) * uhbt(I,j)
       ubt_wtd(I,j) = ubt_wtd(I,j) + wt_vel(n) * ubt(I,j)
     enddo ; enddo
     !GOMP do
+    !$acc loop
     do J=js-1,je ; do i=is,ie
       vbt_sum(i,J) = vbt_sum(i,J) + wt_trans(n) * vbt_trans(i,J)
       vhbt_sum(i,J) = vhbt_sum(i,J) + wt_trans(n) * vhbt(i,J)
       vbt_wtd(i,J) = vbt_wtd(i,J) + wt_vel(n) * vbt(i,J)
     enddo ; enddo
+    !$acc end parallel
     !GOMP end parallel
 
     if (apply_OBCs) then
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP parallel do default(shared)
+        !GDD added
+        !print *, "GDD inside u update and (apply_OBCs) and &
+        !          (CS%BT_OBC%apply_u_OBCs) line 2078"
+        !!$acc parallel loop
         do j=js,je ; do I=is-1,ie
           if (OBC%segnum_u(I,j) /= OBC_NONE) then
             ubt_sum(I,j) = ubt_sum_prev(I,j) ; uhbt_sum(I,j) = uhbt_sum_prev(I,j)
             ubt_wtd(I,j) = ubt_wtd_prev(I,j)
           endif
         enddo ; enddo
+        !!$acc end parallel
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP parallel do default(shared)
+        !GDD added
+        !print *, "GDD inside u update and (apply_OBCs) and &
+        !          (CS%BT_OBC%apply_v_OBCs) line 2093"
+        !!$acc parallel loop
         do J=js-1,je ; do I=is,ie
           if (OBC%segnum_v(i,J) /= OBC_NONE) then
             vbt_sum(i,J) = vbt_sum_prev(i,J) ; vhbt_sum(i,J) = vhbt_sum_prev(i,J)
             vbt_wtd(i,J) = vbt_wtd_prev(i,J)
           endif
         enddo ; enddo
+        !!$acc end parallel
       endif
 
       call apply_velocity_OBCs(OBC, ubt, vbt, uhbt, vhbt, &
            ubt_trans, vbt_trans, eta, ubt_old, vbt_old, CS%BT_OBC, &
            G, MS, US, iev-ie, dtbt, bebt, use_BT_cont, Datu, Datv, BTCL_u, BTCL_v, &
            uhbt0, vhbt0)
-      if (CS%BT_OBC%apply_u_OBCs) then ; do j=js,je ; do I=is-1,ie
-        if (OBC%segnum_u(I,j) /= OBC_NONE) then
-          ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
-          uhbt_sum(I,j) = uhbt_sum(I,j) + wt_trans(n) * uhbt(I,j)
-          ubt_wtd(I,j) = ubt_wtd(I,j) + wt_vel(n) * ubt(I,j)
-        endif
-      enddo ; enddo ; endif
-      if (CS%BT_OBC%apply_v_OBCs) then ; do J=js-1,je ; do i=is,ie
-        if (OBC%segnum_v(i,J) /= OBC_NONE) then
-          vbt_sum(i,J) = vbt_sum(i,J) + wt_trans(n) * vbt_trans(i,J)
-          vhbt_sum(i,J) = vhbt_sum(i,J) + wt_trans(n) * vhbt(i,J)
-          vbt_wtd(i,J) = vbt_wtd(i,J) + wt_vel(n) * vbt(i,J)
-        endif
-      enddo ; enddo ; endif
+      if (CS%BT_OBC%apply_u_OBCs) then 
+        !!$acc parallel loop
+        do j=js,je ; do I=is-1,ie
+          if (OBC%segnum_u(I,j) /= OBC_NONE) then
+            ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
+            uhbt_sum(I,j) = uhbt_sum(I,j) + wt_trans(n) * uhbt(I,j)
+            ubt_wtd(I,j) = ubt_wtd(I,j) + wt_vel(n) * ubt(I,j)
+          endif
+        enddo ; enddo
+        !!$acc end parallel
+      endif
+      if (CS%BT_OBC%apply_v_OBCs) then
+        !!$acc parallel loop
+        do J=js-1,je ; do i=is,ie
+          if (OBC%segnum_v(i,J) /= OBC_NONE) then
+            vbt_sum(i,J) = vbt_sum(i,J) + wt_trans(n) * vbt_trans(i,J)
+            vhbt_sum(i,J) = vhbt_sum(i,J) + wt_trans(n) * vhbt(i,J)
+            vbt_wtd(i,J) = vbt_wtd(i,J) + wt_vel(n) * vbt(i,J)
+          endif
+        enddo ; enddo
+        !!$acc end parallel
+      endif
     endif
 
     if (CS%debug_bt) then
@@ -1999,12 +2230,16 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif
 
     !$OMP parallel do default(shared)
+    !GDD added
+    !print *, "GDD inside u update and after (apply_OBCs) line 2210"
+    !$acc parallel loop
     do j=jsv,jev ; do i=isv,iev
-      eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
+      eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS_IareaT_gpu(i,j)) * &
                  ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
       eta_wtd(i,j) = eta_wtd(i,j) + eta(i,j) * wt_eta(n)
       ! Should there be a concern if eta drops below 0 or G%bathyT?
     enddo ; enddo
+    !$acc end parallel
 
     if (do_hifreq_output) then
       time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dtbt)
@@ -2034,24 +2269,40 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   I_sum_wt_vel = 1.0 / sum_wt_vel ; I_sum_wt_eta = 1.0 / sum_wt_eta
   I_sum_wt_accel = 1.0 / sum_wt_accel ; I_sum_wt_trans = 1.0 / sum_wt_trans
 
-  if (find_etaav) then ; do j=js,je ; do i=is,ie
-    etaav(i,j) = eta_sum(i,j) * I_sum_wt_accel
-  enddo ; enddo ; endif
+  !$GDD added
+  !print *, "GDD near end of function line 2249"
+  !$acc parallel
+  if (find_etaav) then
+    !print *, "GDD near end of func and in find_etaav line 2252"
+    !$acc loop
+    do j=js,je ; do i=is,ie
+      etaav(i,j) = eta_sum(i,j) * I_sum_wt_accel
+    enddo ; enddo
+  endif
+  !$acc loop
   do j=js-1,je+1 ; do i=is-1,ie+1 ; e_anom(i,j) = 0.0 ; enddo ; enddo
   if (interp_eta_PF) then
+    print *, "GDD near end of func and in interp_eta_PF line 2261"
+    !$acc loop
     do j=js,je ; do i=is,ie
       e_anom(i,j) = dgeo_de * (0.5 * (eta(i,j) + eta_in(i,j)) - &
                                (eta_PF_1(i,j) + 0.5*d_eta_PF(i,j)))
     enddo ; enddo
   else
+    !print *, "GDD near end of func and in else interp_eta_PF line 2268"
+    !$acc loop
     do j=js,je ; do i=is,ie
       e_anom(i,j) = dgeo_de * (0.5 * (eta(i,j) + eta_in(i,j)) - eta_PF(i,j))
     enddo ; enddo
   endif
+  !$acc end parallel
+
   if (apply_OBCs) then
     !!! Not safe for wide halos...
     if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
       !GOMP parallel do default(shared)
+      !print *, "GDD inside apply_OBCS and apply_u_OBC line 2280"
+      !!$acc parallel loop
       do j=js,je ; do I=is-1,ie
         if (OBC%segment(OBC%segnum_u(I,j))%direction == OBC_DIRECTION_E) then
           e_anom(i+1,j) = e_anom(i,j)
@@ -2059,10 +2310,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           e_anom(i,j) = e_anom(i+1,j)
         endif
       enddo ; enddo
+      !!$acc end parallel
     endif
 
     if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
       !GOMP parallel do default(shared)
+      !print *, "GDD inside apply_OBCS and apply_u_OBC line 2294"
+      !!$acc parallel loop
       do J=js-1,je ; do I=is,ie
         if (OBC%segment(OBC%segnum_v(i,J))%direction == OBC_DIRECTION_N) then
           e_anom(i,j+1) = e_anom(i,j)
@@ -2070,13 +2324,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           e_anom(i,j) = e_anom(i,j+1)
         endif
       enddo ; enddo
+      !!$acc end parallel
     endif
   endif
 
   ! It is possible that eta_out and eta_in are the same.
+  !GDD added
+  !print *, "GDD eta_out calculation line 2309"
+  !$acc parallel loop
   do j=js,je ; do i=is,ie
     eta_out(i,j) = eta_wtd(i,j) * I_sum_wt_eta
   enddo ; enddo
+  !$acc end parallel
 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
   if (id_clock_pass_post > 0) call cpu_clock_begin(id_clock_pass_post)
@@ -2089,21 +2348,27 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_pass_post > 0) call cpu_clock_end(id_clock_pass_post)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
 
+  !print *, "GDD calculation near line 2327"
+  !$acc parallel loop
   do j=js,je ; do I=is-1,ie
-    CS%ubtav(I,j) = ubt_sum(I,j) * I_sum_wt_trans
+    CS_ubtav_gpu(I,j) = ubt_sum(I,j) * I_sum_wt_trans
     uhbtav(I,j) = uhbt_sum(I,j) * I_sum_wt_trans
  ! The following line would do approximately nothing, as I_sum_wt_accel ~= 1.
  !###   u_accel_bt(I,j) = u_accel_bt(I,j) * I_sum_wt_accel
     ubt_wtd(I,j) = ubt_wtd(I,j) * I_sum_wt_vel
   enddo ; enddo
+  !$acc end parallel
 
+  !print *, "GDD calculation near line 2338"
+  !$acc parallel loop
   do J=js-1,je ; do i=is,ie
-    CS%vbtav(i,J) = vbt_sum(i,J) * I_sum_wt_trans
+    CS_vbtav_gpu(i,J) = vbt_sum(i,J) * I_sum_wt_trans
     vhbtav(i,J) = vhbt_sum(i,J) * I_sum_wt_trans
  ! The following line would do approximately nothing, as I_sum_wt_accel ~= 1.
  !###   v_accel_bt(i,J) = v_accel_bt(i,J)  * I_sum_wt_accel
     vbt_wtd(i,J) = vbt_wtd(i,J) * I_sum_wt_vel
   enddo ; enddo
+  !$acc end parallel
 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
   if (id_clock_pass_post > 0) call cpu_clock_begin(id_clock_pass_post)
@@ -2119,81 +2384,163 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Now calculate each layer's accelerations.
   !$OMP parallel do default(shared)
+  !print *, "GDD 3 level loop near 2363"
+  !$acc parallel loop
   do k=1,nz
     do j=js,je ; do I=is-1,ie
       accel_layer_u(I,j,k) = (u_accel_bt(I,j) - &
            ((pbce(i+1,j,k) - gtot_W(i+1,j)) * e_anom(i+1,j) - &
-            (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS%IdxCu(I,j) )
+            (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS_IdxCu_gpu(I,j) )
       if (abs(accel_layer_u(I,j,k)) < accel_underflow) accel_layer_u(I,j,k) = 0.0
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
       accel_layer_v(i,J,k) = (v_accel_bt(i,J) - &
            ((pbce(i,j+1,k) - gtot_S(i,j+1)) * e_anom(i,j+1) - &
-            (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS%IdyCv(i,J) )
+            (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS_IdyCv_gpu(i,J) )
       if (abs(accel_layer_v(i,J,k)) < accel_underflow) accel_layer_v(i,J,k) = 0.0
     enddo ; enddo
   enddo
+  !$acc end parallel
 
   if (apply_OBCs) then
     ! Correct the accelerations at OBC velocity points, but only in the
     ! symmetric-memory computational domain, not in the wide halo regions.
-    if (CS%BT_OBC%apply_u_OBCs) then ; do j=js,je ; do I=is-1,ie
-      if (OBC%segnum_u(I,j) /= OBC_NONE) then
-        u_accel_bt(I,j) = (ubt_wtd(I,j) - ubt_first(I,j)) / dt
-        do k=1,nz ; accel_layer_u(I,j,k) = u_accel_bt(I,j) ; enddo
-      endif
-    enddo ; enddo ; endif
-    if (CS%BT_OBC%apply_v_OBCs) then ; do J=js-1,je ; do i=is,ie
-      if (OBC%segnum_v(i,J) /= OBC_NONE) then
-        v_accel_bt(i,J) = (vbt_wtd(i,J) - vbt_first(i,J)) / dt
-        do k=1,nz ; accel_layer_v(i,J,k) = v_accel_bt(i,J) ; enddo
-      endif
-    enddo ; enddo ; endif
+    if (CS%BT_OBC%apply_u_OBCs) then 
+      !print *, "GDD inside apply_OBCs and CS%BT_OBC%apply_u_OBCs line 2385"
+      !!$acc parallel loop
+      do j=js,je ; do I=is-1,ie
+        if (OBC%segnum_u(I,j) /= OBC_NONE) then
+          u_accel_bt(I,j) = (ubt_wtd(I,j) - ubt_first(I,j)) / dt
+          do k=1,nz ; accel_layer_u(I,j,k) = u_accel_bt(I,j) ; enddo
+        endif
+      enddo ; enddo
+      !!$acc end parallel
+    endif
+    if (CS%BT_OBC%apply_v_OBCs) then
+      !print *, "GDD inside apply_OBCs and CS%BT_OBC%apply_v_OBCs line 2396"
+      !!$acc parallel loop
+      do J=js-1,je ; do i=is,ie
+        if (OBC%segnum_v(i,J) /= OBC_NONE) then
+          v_accel_bt(i,J) = (vbt_wtd(i,J) - vbt_first(i,J)) / dt
+          do k=1,nz ; accel_layer_v(i,J,k) = v_accel_bt(i,J) ; enddo
+        endif
+      enddo ; enddo
+      !!$acc end parallel
+    endif
   endif
 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
 
+  !_________________Temporary Arrays for GPU porting_________________________
+  ! Update CS% variables with their GPU counterparts
+  do i=1,size(CS%ubtav,1); do j=1,size(CS%ubtav,2)
+    CS%ubtav(i,j) = CS_ubtav_gpu(i,j)
+  enddo;enddo
+
+  do i=1,size(CS%vbtav,1); do j=1,size(CS%vbtav,2)
+    CS%vbtav(i,j) = CS_vbtav_gpu(i,j)
+  enddo;enddo
+  !____________________End of Temp Arrays______________________________
+
   ! Calculate diagnostic quantities.
   if (query_averaging_enabled(CS%diag)) then
-
-    do j=js,je ; do I=is-1,ie ; CS%ubt_IC(I,j) = ubt_wtd(I,j) ; enddo ; enddo
-    do J=js-1,je ; do i=is,ie ; CS%vbt_IC(i,J) = vbt_wtd(i,J) ; enddo ; enddo
+    !GDD added
+    !print *, "GDD inside query_averaging_enabled(CS%diag) line 2338"
+    !$acc parallel
+    !$acc loop
+    do j=js,je ; do I=is-1,ie ; CS_ubt_IC_gpu(I,j) = ubt_wtd(I,j) ; enddo ; enddo
+    !$acc loop
+    do J=js-1,je ; do i=is,ie ; CS_vbt_IC_gpu(i,J) = vbt_wtd(i,J) ; enddo ; enddo
+    !$acc end parallel
     if (use_BT_cont) then
+      !GDD added
+      !print *, "GDD inside query_averaging_enabled(CS%diag) and &
+      !          use_BT_cont line 2423"
+      !$acc parallel
+      !$acc loop
       do j=js,je ; do I=is-1,ie
-        CS%uhbt_IC(I,j) = find_uhbt(ubt_wtd(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
+        CS_uhbt_IC_gpu(I,j) = find_uhbt(ubt_wtd(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
       enddo ; enddo
+      !$acc loop
       do J=js-1,je ; do i=is,ie
-        CS%vhbt_IC(i,J) = find_vhbt(vbt_wtd(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
+        CS_vhbt_IC_gpu(i,J) = find_vhbt(vbt_wtd(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
       enddo ; enddo
+      !$acc end parallel
     else
+      !GDD added
+      print *,  "GDD inside query_averaging_enabled(CS%diag) and &
+                 else of use_BT_cont line 2437"
+      !$acc parallel
+      !$acc loop
       do j=js,je ; do I=is-1,ie
-        CS%uhbt_IC(I,j) = ubt_wtd(I,j) * Datu(I,j) + uhbt0(I,j)
+        CS_uhbt_IC_gpu(I,j) = ubt_wtd(I,j) * Datu(I,j) + uhbt0(I,j)
       enddo ; enddo
+      !$acc loop
       do J=js-1,je ; do i=is,ie
-        CS%vhbt_IC(i,J) = vbt_wtd(i,J) * Datv(i,J) + vhbt0(i,J)
+        CS_vhbt_IC_gpu(i,J) = vbt_wtd(i,J) * Datv(i,J) + vhbt0(i,J)
       enddo ; enddo
+      !$acc end parallel
     endif
+
+   !_________________Temporary Arrays for GPU porting_________________________
+   ! Update CS% variables with their GPU counterparts
+   do i=1,size(CS%ubt_IC,1); do j=1,size(CS%ubt_IC,2)
+     CS%ubt_IC(i,j) = CS_ubt_IC_gpu(i,j)
+   enddo; enddo
+
+   do i=1,size(CS%vbt_IC,1); do j=1,size(CS%vbt_IC,2)
+     CS%vbt_IC(i,j) = CS_vbt_IC_gpu(i,j)
+   enddo; enddo
+
+   do i=1,size(CS%uhbt_IC,1); do j=1,size(CS%uhbt_IC,2)
+     CS%uhbt_IC(i,j) = CS_uhbt_IC_gpu(i,j)
+   enddo; enddo
+
+   do i=1,size(CS%vhbt_IC,1); do j=1,size(CS%vhbt_IC,2)
+     CS%vhbt_IC(i,j) = CS_vhbt_IC_gpu(i,j)
+   enddo; enddo
+
+   !____________________End of Temp Arrays______________________________
 
 !  Offer various barotropic terms for averaging.
     if (CS%id_PFu_bt > 0) then
+      ! GDD OpenACC added
+      print *, "GDD inside query_averaging_enabled(CS%diag) and &
+                (CS%id_PFu_bt > 0) line 2454"
+      !$acc parallel loop
       do j=js,je ; do I=is-1,ie
         PFu_bt_sum(I,j) = PFu_bt_sum(I,j) * I_sum_wt_accel
       enddo ; enddo
+      !$acc end parallel
       call post_data(CS%id_PFu_bt, PFu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
     endif
     if (CS%id_PFv_bt > 0) then
+      ! GDD OpenACC added
+      print *, "GDD inside query_averaging_enabled(CS%diag) and &
+                (CS%id_PFv_bt > 0) line 2465"
+      !$acc parallel loop
       do J=js-1,je ; do i=is,ie
         PFv_bt_sum(i,J) = PFv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
+      !$acc end parallel
       call post_data(CS%id_PFv_bt, PFv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
     endif
     if (CS%id_Coru_bt > 0) then
+      ! GDD OpenACC added
+      print *, "GDD inside query_averaging_enabled(CS%diag) and &
+                (CS%id_Coru_bt > 0) line 2476"
+      !$acc parallel loop
       do j=js,je ; do I=is-1,ie
         Coru_bt_sum(I,j) = Coru_bt_sum(I,j) * I_sum_wt_accel
       enddo ; enddo
+      !$acc end parallel
       call post_data(CS%id_Coru_bt, Coru_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
     endif
     if (CS%id_Corv_bt > 0) then
+      ! GDD OpenACC added
+      print *, "GDD inside query_averaging_enabled(CS%diag) and &
+                (CS%id_Corv_bt > 0) line 2487"
+      !$acc parallel loop
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
@@ -3028,6 +3375,7 @@ end subroutine btcalc
 
 !> The function find_uhbt determines the zonal transport for a given velocity.
 function find_uhbt(u, BTC, US) result(uhbt)
+  !$acc routine seq
   real, intent(in) :: u    !< The local zonal velocity [L T-1 ~> m s-1]
   type(local_BT_cont_u_type), intent(in) :: BTC !< A structure containing various fields that
                            !! allow the barotropic transports to be calculated consistently
@@ -3146,6 +3494,7 @@ end function uhbt_to_ubt
 
 !> The function find_vhbt determines the meridional transport for a given velocity.
 function find_vhbt(v, BTC, US) result(vhbt)
+  !$acc routine seq
   real, intent(in) :: v    !< The local meridional velocity [L T-1 ~> m s-1]
   type(local_BT_cont_v_type), intent(in) :: BTC !< A structure containing various fields that
                            !! allow the barotropic transports to be calculated consistently
