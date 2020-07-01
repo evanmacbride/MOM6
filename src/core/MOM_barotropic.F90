@@ -1813,7 +1813,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP do
-        !GDD OpenACC added
+        !GDD OpenACC commented b/c of OBC
         !!$acc parallel loop collapse(2)
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J) ; vhbt(i,J) = vhbt_prev(i,J)
@@ -1823,7 +1823,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       ! Now update the zonal velocity.
       !GOMP do
       !GDD added
-      !!$acc parallel loop collapse(2)
+      !$acc parallel loop collapse(2)
       do j=jsv,jev ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) + dzon(I,j) * vbt(i+1,J-1))) - &
@@ -1832,7 +1832,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                      (eta_PF_BT(i+1,j)-eta_PF(i+1,j))*gtot_W(i+1,j)) * &
                     dgeo_de * CS_IdxCu_gpu(I,j)
       enddo ; enddo
-      !!$acc end parallel
+      !$acc end parallel
 
       if (CS%dynamic_psurf) then
         !GOMP do
@@ -1846,7 +1846,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
         !GOMP do
-        !GDD added
+        !GDD OpenACC commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
@@ -1862,15 +1862,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
              dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
         if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
-
-        if (CS_linear_wave_drag_gpu) then
+      enddo; enddo
+      !$acc end parallel
+      if (CS_linear_wave_drag_gpu) then
+        !$acc parallel loop collapse(2)
+        do j=jsv,jev ; do I=isv-1,iev
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
-        else
+        enddo; enddo
+        !$acc end parallel
+      else
+        !$acc parallel loop collapse(2)
+        do j=jsv,jev ; do I=isv-1,iev
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
-        endif
-      enddo ; enddo
-      !$acc end parallel
+        enddo ; enddo
+        !$acc end parallel
+      endif
 
       if (use_BT_cont) then
         !GOMP do
@@ -1891,7 +1898,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
      if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
-        !GDD added
+        !GDD OpenACC commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
@@ -1925,7 +1932,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
         !GOMP do
-        !GDD added
+        !GDD commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
@@ -1934,7 +1941,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       !GOMP do
-      !GDD added
+      !GDD split loops to move if-else
       !$acc parallel loop collapse(2)
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
@@ -1942,15 +1949,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
              dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
         if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
-
-        if (CS_linear_wave_drag_gpu) then
-          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
-              ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
-        else
-          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
-        endif
       enddo ; enddo
       !$acc end parallel
+      if (CS_linear_wave_drag_gpu) then
+        !$acc parallel loop collapse(2)
+        do j=jsv-1,jev+1 ; do I=isv-1,iev
+          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
+              ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))  
+        enddo ; enddo
+        !$acc end parallel
+      else
+        !$acc parallel loop collapse(2)
+        do j=jsv-1,jev+1 ; do I=isv-1,iev
+          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))  
+        enddo ; enddo
+        !$acc end parallel
+      endif
 
       if (use_BT_cont) then
         !GOMP do
@@ -1971,6 +1985,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
+        !GDD OpenACC commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do j=jsv-1,jev+1 ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
@@ -2017,7 +2032,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
         !GOMP do
-        !GDD added
+        !GDD OpenACC commented out b/c of OBC 
         !!$acc parallel loop collapse(2)
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           PFv(i,J) = 0.0
@@ -2063,7 +2078,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP do
-        !GDD added
+        !GDD OpenACC commented out b/c of OBC 
         !!$acc parallel loop collapse(2)
         do J=jsv-1,jev ; do i=isv,iev ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J); vhbt(i,J) = vhbt_prev(i,J)
@@ -2107,27 +2122,27 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     !GOMP do
     !GDD added
-    !!$acc parallel
-    !!$acc loop collapse(2)
+    !$acc parallel
+    !$acc loop collapse(2)
     do j=js,je ; do I=is-1,ie
       ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
       uhbt_sum(I,j) = uhbt_sum(I,j) + wt_trans(n) * uhbt(I,j)
       ubt_wtd(I,j) = ubt_wtd(I,j) + wt_vel(n) * ubt(I,j)
     enddo ; enddo
     !GOMP do
-    !!$acc loop collapse(2)
+    !$acc loop collapse(2)
     do J=js-1,je ; do i=is,ie
       vbt_sum(i,J) = vbt_sum(i,J) + wt_trans(n) * vbt_trans(i,J)
       vhbt_sum(i,J) = vhbt_sum(i,J) + wt_trans(n) * vhbt(i,J)
       vbt_wtd(i,J) = vbt_wtd(i,J) + wt_vel(n) * vbt(i,J)
     enddo ; enddo
-    !!$acc end parallel
+    !$acc end parallel
     !GOMP end parallel
 
     if (apply_OBCs) then
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP parallel do default(shared)
-        !GDD added
+        !GDD commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do j=js,je ; do I=is-1,ie
           if (OBC%segnum_u(I,j) /= OBC_NONE) then
@@ -2140,7 +2155,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP parallel do default(shared)
-        !GDD added
+        !GDD commented out b/c of OBC 
         !!$acc parallel loop collapse(2)
         do J=js-1,je ; do I=is,ie
           if (OBC%segnum_v(i,J) /= OBC_NONE) then
@@ -2156,6 +2171,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
            G, MS, US, iev-ie, dtbt, bebt, use_BT_cont, Datu, Datv, BTCL_u, BTCL_v, &
            uhbt0, vhbt0)
       if (CS%BT_OBC%apply_u_OBCs) then 
+        !GDD commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do j=js,je ; do I=is-1,ie
           if (OBC%segnum_u(I,j) /= OBC_NONE) then
@@ -2167,6 +2183,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !!$acc end parallel
       endif
       if (CS%BT_OBC%apply_v_OBCs) then
+        !GDD commented out b/c of OBC
         !!$acc parallel loop collapse(2)
         do J=js-1,je ; do i=is,ie
           if (OBC%segnum_v(i,J) /= OBC_NONE) then
@@ -2186,14 +2203,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     !$OMP parallel do default(shared)
     !GDD added
-    !!$acc parallel loop collapse(2)
+    !$acc parallel loop collapse(2)
     do j=jsv,jev ; do i=isv,iev
       eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS_IareaT_gpu(i,j)) * &
                  ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
       eta_wtd(i,j) = eta_wtd(i,j) + eta(i,j) * wt_eta(n)
       ! Should there be a concern if eta drops below 0 or G%bathyT?
     enddo ; enddo
-    !!$acc end parallel
+    !$acc end parallel
 
     if (do_hifreq_output) then
       time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dtbt)
@@ -2225,11 +2242,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   if (find_etaav) then
     !GDD added loop runs long
-    !!$acc parallel loop collapse(2)
+    !$acc parallel loop collapse(2)
     do j=js,je ; do i=is,ie
       etaav(i,j) = eta_sum(i,j) * I_sum_wt_accel
     enddo ; enddo
-    !!$acc end parallel
+    !$acc end parallel
   endif  
   !$acc parallel loop collapse(2)
   do j=js-1,je+1 ; do i=is-1,ie+1 ; e_anom(i,j) = 0.0 ; enddo ; enddo
@@ -2253,7 +2270,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !!! Not safe for wide halos...
     if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
       !GOMP parallel do default(shared)
-      !GDD added
+      !GDD commented out b/c of OBC
       !!$acc parallel loop collapse(2)
       do j=js,je ; do I=is-1,ie
         if (OBC%segment(OBC%segnum_u(I,j))%direction == OBC_DIRECTION_E) then
@@ -2267,6 +2284,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
       !GOMP parallel do default(shared)
+      !GDD commented out b/c of OBC
       !!$acc parallel loop collapse(2)
       do J=js-1,je ; do I=is,ie
         if (OBC%segment(OBC%segnum_v(i,J))%direction == OBC_DIRECTION_N) then
