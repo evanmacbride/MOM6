@@ -227,6 +227,8 @@ integer :: id_clock_horvisc, id_clock_mom_update
 integer :: id_clock_continuity, id_clock_thick_diff
 integer :: id_clock_btstep, id_clock_btcalc, id_clock_btforce
 integer :: id_clock_pass, id_clock_pass_init
+!GDD
+integer :: id_clock_rk2
 !!@}
 
 contains
@@ -336,17 +338,25 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
   showCallTree = callTree_showQuery()
   if (showCallTree) call callTree_enter("step_MOM_dyn_split_RK2(), MOM_dynamics_split_RK2.F90")
-
   !$OMP parallel do default(shared)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 1"
+  !$acc parallel
+  !$acc loop seq
   do k=1,nz
+    !$acc loop collapse(2)
     do j=G%jsd,G%jed   ; do i=G%isdB,G%iedB ;  up(i,j,k) = 0.0 ; enddo ; enddo
+    !$acc loop collapse(2)
     do j=G%jsdB,G%jedB ; do i=G%isd,G%ied   ;  vp(i,j,k) = 0.0 ; enddo ; enddo
+    !$acc loop collapse(2)
     do j=G%jsd,G%jed   ; do i=G%isd,G%ied   ;  hp(i,j,k) = h(i,j,k) ; enddo ; enddo
   enddo
-
+  !$acc end parallel
+  !print *, "GDD post loop group 1"
+  call cpu_clock_end(id_clock_rk2) !GDD
   ! Update CFL truncation value as function of time
   call updateCFLtruncationValue(Time_local, CS%vertvisc_CSp)
-
   if (CS%debug) then
     call MOM_state_chksum("Start predictor ", u, v, h, uh, vh, G, GV, US, symmetric=sym)
     call check_redundant("Start predictor u ", u, v, G)
@@ -364,13 +374,29 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
   if (associated(CS%OBC)) then
     if (CS%debug_OBC) call open_boundary_test_extern_h(G, GV, CS%OBC, h)
-
-    do k=1,nz ; do j=G%jsd,G%jed ; do I=G%IsdB,G%IedB
-      u_old_rad_OBC(I,j,k) = u_av(I,j,k)
-    enddo ; enddo ; enddo
-    do k=1,nz ; do J=G%JsdB,G%JedB ; do i=G%isd,G%ied
-      v_old_rad_OBC(i,J,k) = v_av(i,J,k)
-    enddo ; enddo ; enddo
+    ! GDD OpenACC commented out b/c not called
+    !print *, "GDD loop group 2"
+    !!$acc parallel
+    !!$acc loop seq
+    do k=1,nz
+      !!$acc loop collapse(2)
+      do j=G%jsd,G%jed ; do I=G%IsdB,G%IedB
+        u_old_rad_OBC(I,j,k) = u_av(I,j,k)
+      enddo ; enddo
+    enddo
+    !!$acc end parallel
+    !print *, "GDD post group 2"
+    !print *, "GDD loop group 3"
+    !!$acc parallel
+    !!$acc loop seq
+    do k=1,nz
+      !!$acc loop collapse(2)
+      do J=G%JsdB,G%JedB ; do i=G%isd,G%ied
+        v_old_rad_OBC(i,J,k) = v_av(i,J,k)
+      enddo ; enddo
+    enddo
+    !!$acc end parallel
+    !print *, "GDD post group 3"
   endif
 
   BT_cont_BT_thick = .false.
@@ -380,7 +406,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (CS%split_bottom_stress) then
     taux_bot => CS%taux_bot ; tauy_bot => CS%tauy_bot
   endif
-
+  
   !--- begin set up for group halo pass
 
   cont_stencil = continuity_stencil(CS%continuity_CSp)
@@ -412,10 +438,15 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   if (dyn_p_surf) then
     Pa_to_eta = 1.0 / GV%H_to_Pa
     !$OMP parallel do default(shared)
+    !GDD OpenACC added
+    !print *, "GDD loop group 4"
+    !!$acc parallel loop collapse(2)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       eta_PF_start(i,j) = CS%eta_PF(i,j) - Pa_to_eta * &
                           (p_surf_begin(i,j) - p_surf_end(i,j))
     enddo ; enddo
+    !!$acc end parallel
+    !print *, "GDD post group 4"
   endif
   call cpu_clock_end(id_clock_pres)
   call disable_averaging(CS%diag)
@@ -440,14 +471,24 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 ! u_bc_accel = CAu + PFu + diffu(u[n-1])
   call cpu_clock_begin(id_clock_btforce)
   !$OMP parallel do default(shared)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 5"
+  !$acc parallel
+  !$acc loop seq
   do k=1,nz
+    !$acc loop collapse(2)
     do j=js,je ; do I=Isq,Ieq
       u_bc_accel(I,j,k) = (CS%CAu(I,j,k) + CS%PFu(I,j,k)) + CS%diffu(I,j,k)
     enddo ; enddo
+    !$acc loop collapse(2)
     do J=Jsq,Jeq ; do i=is,ie
       v_bc_accel(i,J,k) = (CS%CAv(i,J,k) + CS%PFv(i,J,k)) + CS%diffv(i,J,k)
     enddo ; enddo
   enddo
+  !$acc end parallel
+  !print *, "GDD post group 5"
+  call cpu_clock_end(id_clock_rk2) !GDD
   if (associated(CS%OBC)) then
     call open_boundary_zero_normal_flow(CS%OBC, G, u_bc_accel, v_bc_accel)
   endif
@@ -464,15 +505,25 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   endif
 
   call cpu_clock_begin(id_clock_vertvisc)
-  !$OMP parallel do default(shared)
+  !$OMP parallel do default(shared) 
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 6"
+  !$acc parallel
+  !$acc loop seq
   do k=1,nz
+    !$acc loop collapse(2)
     do j=js,je ; do I=Isq,Ieq
       up(I,j,k) = G%mask2dCu(I,j) * (u(I,j,k) + dt * u_bc_accel(I,j,k))
     enddo ; enddo
+    !$acc loop collapse(2)
     do J=Jsq,Jeq ; do i=is,ie
       vp(i,J,k) = G%mask2dCv(i,J) * (v(i,J,k) + dt * v_bc_accel(i,J,k))
     enddo ; enddo
   enddo
+  !$acc end parallel
+  !print *, "GDD post group 6"
+  call cpu_clock_end(id_clock_rk2) !GDD
 
   call enable_averages(dt, Time_local, CS%diag)
   call set_viscous_ML(u, v, h, tv, forces, visc, dt, G, GV, US, &
@@ -541,18 +592,29 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 ! up = u + dt_pred*( u_bc_accel + u_accel_bt )
   dt_pred = dt * CS%be
   call cpu_clock_begin(id_clock_mom_update)
-
   !$OMP parallel do default(shared)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 7"
+  !$acc parallel
+  !$acc loop seq
   do k=1,nz
+    !!$acc parallel
+    !$acc loop collapse(2)
     do J=Jsq,Jeq ; do i=is,ie
       vp(i,J,k) = G%mask2dCv(i,J) * (v(i,J,k) + dt_pred * &
                       (v_bc_accel(i,J,k) + CS%v_accel_bt(i,J,k)))
     enddo ; enddo
+    !$acc loop collapse(2)
     do j=js,je ; do I=Isq,Ieq
       up(I,j,k) = G%mask2dCu(I,j) * (u(I,j,k) + dt_pred * &
                       (u_bc_accel(I,j,k) + CS%u_accel_bt(I,j,k)))
     enddo ; enddo
+    !!$acc end parallel
   enddo
+  !$acc end parallel
+  !print *, "GDD post group7
+  call cpu_clock_end(id_clock_rk2) !GDD
   call cpu_clock_end(id_clock_mom_update)
 
   if (CS%debug) then
@@ -626,9 +688,20 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
   ! h_av = (h + hp)/2
   !$OMP parallel do default(shared)
-  do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
-    h_av(i,j,k) = 0.5*(h(i,j,k) + hp(i,j,k))
-  enddo ; enddo ; enddo
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 8"
+  !$acc parallel
+  !$acc loop seq
+  do k=1,nz
+    !$acc loop collapse(2)
+    do j=js-2,je+2 ; do i=is-2,ie+2
+      h_av(i,j,k) = 0.5*(h(i,j,k) + hp(i,j,k))
+    enddo ; enddo
+  enddo
+  !$acc end parallel
+  !print *, "GDD post group 8"
+  call cpu_clock_end(id_clock_rk2) !GDD
 
   ! The correction phase of the time step starts here.
   call enable_averages(dt, Time_local, CS%diag)
@@ -646,9 +719,18 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
     ! Back up hp to the value it would have had after a time-step of
     ! begw*dt.  hp is not used again until recalculated by continuity.
     !$OMP parallel do default(shared)
-    do k=1,nz ; do j=js-1,je+1 ; do i=is-1,ie+1
-      hp(i,j,k) = (1.0-CS%begw)*h(i,j,k) + CS%begw*hp(i,j,k)
-    enddo ; enddo ; enddo
+    !GDD OpenACC commented out, not called
+    !print *, "GDD loop group 9"
+    !!$acc parallel
+    !!$acc loop seq
+    do k=1,nz
+      !!$acc loop collapse(2)
+      do j=js-1,je+1 ; do i=is-1,ie+1
+        hp(i,j,k) = (1.0-CS%begw)*h(i,j,k) + CS%begw*hp(i,j,k)
+      enddo ; enddo
+    enddo
+    !!$acc end parallel
+    !print *, "GDD post group 9"
 
     ! PFu = d/dx M(hp,T,S)
     ! pbce = dM/deta
@@ -697,14 +779,24 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 ! u_bc_accel = CAu + PFu + diffu(u[n-1])
   call cpu_clock_begin(id_clock_btforce)
   !$OMP parallel do default(shared)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 10"
+  !$acc parallel
+  !$acc loop seq
   do k=1,nz
+    !$acc loop collapse(2)
     do j=js,je ; do I=Isq,Ieq
       u_bc_accel(I,j,k) = (CS%Cau(I,j,k) + CS%PFu(I,j,k)) + CS%diffu(I,j,k)
     enddo ; enddo
+    !$acc loop collapse(2)
     do J=Jsq,Jeq ; do i=is,ie
       v_bc_accel(i,J,k) = (CS%Cav(i,J,k) + CS%PFv(i,J,k)) + CS%diffv(i,J,k)
     enddo ; enddo
   enddo
+  !$acc end parallel
+  !print *, "GDD post group 10"
+  call cpu_clock_end(id_clock_rk2) !GDD
   if (associated(CS%OBC)) then
     call open_boundary_zero_normal_flow(CS%OBC, G, u_bc_accel, v_bc_accel)
   endif
@@ -736,7 +828,14 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
               BT_cont = CS%BT_cont, eta_PF_start=eta_PF_start, &
               taux_bot=taux_bot, tauy_bot=tauy_bot, &
               uh0=uh_ptr, vh0=vh_ptr, u_uh0=u_ptr, v_vh0=v_ptr)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 11"
+  !$acc parallel loop collapse(2)
   do j=js,je ; do i=is,ie ; eta(i,j) = eta_pred(i,j) ; enddo ; enddo
+  !$acc end parallel
+  !print *, "GDD post group 11"
+  call cpu_clock_end(id_clock_rk2) !GDD
 
   call cpu_clock_end(id_clock_btstep)
   if (showCallTree) call callTree_leave("btstep()")
@@ -748,16 +847,30 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
   ! u = u + dt*( u_bc_accel + u_accel_bt )
   call cpu_clock_begin(id_clock_mom_update)
   !$OMP parallel do default(shared)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 12"
+  !$acc parallel
+  !$acc loop seq
   do k=1,nz
+    !!$acc parallel
+    !$acc loop independent collapse(2)
     do j=js,je ; do I=Isq,Ieq
       u(I,j,k) = G%mask2dCu(I,j) * (u(I,j,k) + dt * &
                       (u_bc_accel(I,j,k) + CS%u_accel_bt(I,j,k)))
     enddo ; enddo
+    !!$acc end parallel
+    !!$acc parallel
+    !$acc loop independent collapse(2)
     do J=Jsq,Jeq ; do i=is,ie
       v(i,J,k) = G%mask2dCv(i,J) * (v(i,J,k) + dt * &
                       (v_bc_accel(i,J,k) + CS%v_accel_bt(i,J,k)))
     enddo ; enddo
+    !!$acc end parallel
   enddo
+  !$acc end parallel
+  !print *, "GDD post group 12"
+  call cpu_clock_end(id_clock_rk2) !GDD
   call cpu_clock_end(id_clock_mom_update)
 
   if (CS%debug) then
@@ -788,9 +901,20 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! Later, h_av = (h_in + h_out)/2, but for now use h_av to store h_in.
   !$OMP parallel do default(shared)
-  do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
-    h_av(i,j,k) = h(i,j,k)
-  enddo ; enddo ; enddo
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 13"
+  !$acc parallel
+  !$acc loop seq
+  do k=1,nz
+    !$acc loop collapse(2)
+    do j=js-2,je+2 ; do i=is-2,ie+2
+      h_av(i,j,k) = h(i,j,k)
+    enddo ; enddo
+  enddo
+  !$acc end parallel
+  !print *, "GDD post group 13"
+  call cpu_clock_end(id_clock_rk2) !GDD
 
   call do_group_pass(CS%pass_visc_rem, G%Domain, clock=id_clock_pass)
   if (G%nonblocking_updates) then
@@ -824,22 +948,43 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, &
 
 ! h_av = (h_in + h_out)/2 . Going in to this line, h_av = h_in.
   !$OMP parallel do default(shared)
-  do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
-    h_av(i,j,k) = 0.5*(h_av(i,j,k) + h(i,j,k))
-  enddo ; enddo ; enddo
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 14"
+  !$acc parallel
+  !$acc loop seq
+  do k=1,nz
+    !$acc loop collapse(2)
+    do j=js-2,je+2 ; do i=is-2,ie+2
+      h_av(i,j,k) = 0.5*(h_av(i,j,k) + h(i,j,k))
+    enddo ; enddo
+  enddo
+  !$acc end parallel
+  !print *, "GDD post group 14"
+  call cpu_clock_end(id_clock_rk2) !GDD
 
   if (G%nonblocking_updates) &
     call complete_group_pass(CS%pass_av_uvh, G%Domain, clock=id_clock_pass)
 
   !$OMP parallel do default(shared)
+  !GDD OpenACC added
+  call cpu_clock_begin(id_clock_rk2) !GDD
+  !print *, "GDD loop group 15"
+  !$acc parallel
+  !$acc loop seq 
   do k=1,nz
+    !$acc loop collapse(2)
     do j=js-2,je+2 ; do I=Isq-2,Ieq+2
       uhtr(I,j,k) = uhtr(I,j,k) + uh(I,j,k)*dt
     enddo ; enddo
+    !$acc loop collapse(2)
     do J=Jsq-2,Jeq+2 ; do i=is-2,ie+2
       vhtr(i,J,k) = vhtr(i,J,k) + vh(i,J,k)*dt
     enddo ; enddo
   enddo
+  !$acc end parallel
+  !print *, "GDD post group 15"
+  call cpu_clock_end(id_clock_rk2) !GDD
 
   !   The time-averaged free surface height has already been set by the last
   !  call to btstep.
@@ -1245,6 +1390,9 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   id_clock_btcalc     = cpu_clock_id('(Ocean barotropic mode calc)',     grain=CLOCK_MODULE)
   id_clock_btstep     = cpu_clock_id('(Ocean barotropic mode stepping)', grain=CLOCK_MODULE)
   id_clock_btforce    = cpu_clock_id('(Ocean barotropic forcing calc)',  grain=CLOCK_MODULE)
+
+  !GDD added
+  id_clock_rk2        = cpu_clock_id('GDD RK2 Time', grain=CLOCK_MODULE)
 
 end subroutine initialize_dyn_split_RK2
 
