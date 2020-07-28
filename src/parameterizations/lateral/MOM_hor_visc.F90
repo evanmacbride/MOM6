@@ -19,12 +19,16 @@ use MOM_open_boundary,         only : ocean_OBC_type, OBC_DIRECTION_E, OBC_DIREC
 use MOM_open_boundary,         only : OBC_DIRECTION_N, OBC_DIRECTION_S, OBC_NONE
 use MOM_unit_scaling,          only : unit_scale_type
 use MOM_verticalGrid,          only : verticalGrid_type
+use MOM_cpu_clock,             only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_MODULE
 
 implicit none ; private
 
 #include <MOM_memory.h>
 
 public horizontal_viscosity, hor_visc_init, hor_visc_end
+
+!$ms adding hor visc clock
+integer :: hor_visc_gpu_clock_id
 
 !> Control structure for horizontal viscosity
 type, public :: hor_visc_CS ; private
@@ -485,6 +489,10 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   !$OMP   dDel2vdx, dDel2udy, &
   !$OMP   h2uq, h2vq, hu, hv, hq, FatH, RoScl, GME_coeff &
   !$OMP )
+
+!$ms adding hor visc clock
+call cpu_clock_begin(hor_visc_gpu_clock_id)
+
   do k=1,nz
 
     ! The following are the forms of the horizontal tension and horizontal
@@ -765,10 +773,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                                          (0.5*(vort_xy_dy(I,j) + vort_xy_dy(I,j+1)))**2 )
         enddo ; enddo
 
+!$ms adding hor visc clock
+call cpu_clock_end(hor_visc_gpu_clock_id)
         ! This accumulates terms, some of which are in VarMix, so rescaling can not be done here.
         call calc_QG_Leith_viscosity(VarMix, G, GV, US, h, k, div_xx_dx, div_xx_dy, &
                                      vort_xy_dx, vort_xy_dy)
-
+!$ms adding hor visc clock
+call cpu_clock_begin(hor_visc_gpu_clock_id)
       endif
 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1307,6 +1318,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   enddo ! end of k loop
 
+!$ms adding hor visc clock
+call cpu_clock_end(hor_visc_gpu_clock_id)
+
   ! Offer fields for diagnostic averaging.
   if (CS%id_diffu>0)     call post_data(CS%id_diffu, diffu, CS%diag)
   if (CS%id_diffv>0)     call post_data(CS%id_diffv, diffv, CS%diag)
@@ -1426,6 +1440,9 @@ subroutine hor_visc_init(Time, G, US, param_file, diag, CS, MEKE)
 
   CS%diag => diag
 
+  !$ms adding hor visc clock
+  hor_visc_gpu_clock_id = cpu_clock_id("HOR VISC clock", grain=CLOCK_MODULE)
+  
   ! Read parameters and write them to the model log.
   call log_version(param_file, mdl, version, "")
 

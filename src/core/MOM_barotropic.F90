@@ -4,7 +4,7 @@ module MOM_barotropic
 ! This file is part of MOM6. See LICENSE.md for the license.
 
 use MOM_debugging, only : hchksum, uvchksum
-use MOM_cpu_clock, only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE
+use MOM_cpu_clock, only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE,CLOCK_MODULE
 use MOM_diag_mediator, only : post_data, query_averaging_enabled, register_diag_field
 use MOM_diag_mediator, only : safe_alloc_ptr, diag_ctrl, enable_averaging
 use MOM_domains, only : min_across_PEs, clone_MOM_domain, pass_vector
@@ -371,6 +371,9 @@ character*(20), parameter :: HARMONIC_STRING = "HARMONIC"
 character*(20), parameter :: ARITHMETIC_STRING = "ARITHMETIC"
 character*(20), parameter :: BT_CONT_STRING = "FROM_BT_CONT"
 !!@}
+
+!OpenACC port timer information
+integer :: id_btstep_ACC_clock, id_btstep_wkard
 
 contains
 
@@ -802,6 +805,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 ! the halo update that needs to be completed before the next calculations.
   if (CS%linearized_BT_PV) then
     !$OMP parallel do default(shared)
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do J=jsvf-2,jevf+1 ; do I=isvf-2,ievf+1
       q(I,J) = CS%q_D(I,j)
     enddo ; enddo
@@ -813,6 +817,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
       DCor_v(i,J) = CS%D_v_Cor(i,J)
     enddo ; enddo
+    call cpu_clock_end(id_btstep_ACC_clock)
   else
     q(:,:) = 0.0 ; DCor_u(:,:) = 0.0 ; DCor_v(:,:) = 0.0
     !  This option has not yet been written properly.
@@ -846,6 +851,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (id_clock_calc_pre > 0) call cpu_clock_begin(id_clock_calc_pre)
   endif
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   ! Zero out various wide-halo arrays.
   !$OMP parallel do default(shared)
   do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
@@ -888,6 +894,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       eta_PF(i,j) = eta_PF_in(i,j)
     enddo ; enddo
   endif
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   !$OMP parallel do default(shared) private(visc_rem)
   do k=1,nz ; do j=js,je ; do I=is-1,ie
@@ -900,6 +907,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     else ; visc_rem = 1.0 - 0.5*Instep/visc_rem_u(I,j,k) ; endif
     wt_u(I,j,k) = CS%frhatu(I,j,k) * visc_rem
   enddo ; enddo ; enddo
+
   !$OMP parallel do default(shared) private(visc_rem)
   do k=1,nz ; do J=js-1,je ; do i=is,ie
     ! rem needs greater than visc_rem_v and 1-Instep/visc_rem_v.
@@ -911,6 +919,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     wt_v(i,J,k) = CS%frhatv(i,J,k) * visc_rem
   enddo ; enddo ; enddo
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   !   Use u_Cor and v_Cor as the reference values for the Coriolis terms,
   ! including the viscous remnant.
   !$OMP parallel do default(shared)
@@ -944,6 +953,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
     enddo ; enddo
   enddo
+
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   if (CS%tides) then
     call tidal_forcing_sensitivity(G, CS%tides_CSp, det_de)
@@ -981,7 +992,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 ! equations are calculated.  These will be used to determine the difference
 ! between the accelerations due to the average of the layer equations and the
 ! barotropic calculation.
-
+  call cpu_clock_begin(id_btstep_ACC_clock)
   !$OMP parallel do default(shared)
   do j=js,je ; do I=is-1,ie
     ! ### IDatu here should be replaced with 1/D+eta(Bous) or 1/eta(non-Bous).
@@ -1050,6 +1061,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         vbt(i,J) = vbt(i,J) + CS%frhatv(i,J,k) * v_vh0(i,J,k)
       enddo ; enddo ; enddo
     endif
+    call cpu_clock_end(id_btstep_ACC_clock)
+
     if (use_BT_cont) then
       if (CS%adjust_BT_cont) then
         ! Use the additional input transports to broaden the fits
@@ -1066,6 +1079,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         call adjust_local_BT_cont_types(ubt, uhbt, vbt, vhbt, BTCL_u, BTCL_v, &
                                         G, US, MS, 1+ievf-ie)
       endif
+
+      call cpu_clock_begin(id_btstep_ACC_clock)
       !$OMP parallel do default(shared)
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - find_uhbt(ubt(I,j), BTCL_u(I,j), US)
@@ -1074,7 +1089,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - find_vhbt(vbt(i,J), BTCL_v(i,J), US)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
+
     else
+      call cpu_clock_begin(id_btstep_ACC_clock)
       !$OMP parallel do default(shared)
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - Datu(I,j)*ubt(I,j)
@@ -1083,7 +1101,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - Datv(i,J)*vbt(i,J)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
+
+    call cpu_clock_begin(id_btstep_ACC_clock)
     if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
       !$OMP parallel do default(shared)
       do j=js,je ; do I=is-1,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
@@ -1096,8 +1117,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         vhbt0(i,J) = 0.0
       endif ; enddo ; enddo
     endif
+    call cpu_clock_end(id_btstep_ACC_clock)
   endif
 
+call cpu_clock_begin(id_btstep_ACC_clock)
 ! Calculate the initial barotropic velocities from the layer's velocities.
   !$OMP parallel do default(shared)
   do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
@@ -1123,6 +1146,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   do J=js-1,je ; do i=is,ie
     if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
   enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   if (apply_OBCs) then
     ubt_first(:,:) = ubt(:,:) ; vbt_first(:,:) = vbt(:,:)
@@ -1130,6 +1154,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   if (CS%gradual_BT_ICs) then
     !$OMP parallel do default(shared)
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=js,je ; do I=is-1,ie
       BT_force_u(I,j) = BT_force_u(I,j) + (ubt(I,j) - CS%ubt_IC(I,j)) * Idt
       ubt(I,j) = CS%ubt_IC(I,j)
@@ -1141,6 +1166,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       vbt(i,J) = CS%vbt_IC(i,J)
       if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
     enddo ; enddo
+    call cpu_clock_end(id_btstep_ACC_clock)
   endif
 
   if ((Isq > is-1) .or. (Jsq > js-1)) then
@@ -1149,14 +1175,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (id_clock_calc_pre > 0) call cpu_clock_end(id_clock_calc_pre)
     if (id_clock_pass_pre > 0) call cpu_clock_begin(id_clock_pass_pre)
     tmp_u(:,:) = 0.0 ; tmp_v(:,:) = 0.0
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=js,je ; do I=Isq,Ieq ; tmp_u(I,j) = BT_force_u(I,j) ; enddo ; enddo
     do J=Jsq,Jeq ; do i=is,ie ; tmp_v(i,J) = BT_force_v(i,J) ; enddo ; enddo
+    call cpu_clock_end(id_btstep_ACC_clock)
     if (nonblock_setup) then
       call start_group_pass(CS%pass_tmp_uv, G%Domain)
     else
       call do_group_pass(CS%pass_tmp_uv, G%Domain)
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsd,jed ; do I=IsdB,IedB ; BT_force_u(I,j) = tmp_u(I,j) ; enddo ; enddo
       do J=JsdB,JedB ; do i=isd,ied ; BT_force_v(i,J) = tmp_v(i,J) ; enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
     if (id_clock_pass_pre > 0) call cpu_clock_end(id_clock_pass_pre)
     if (id_clock_calc_pre > 0) call cpu_clock_begin(id_clock_calc_pre)
@@ -1172,6 +1202,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
   ! Determine the weighted Coriolis parameters for the neighboring velocities.
+  call cpu_clock_begin(id_btstep_ACC_clock)
   !$OMP parallel do default(shared)
   do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
     if (CS%Sadourny) then
@@ -1209,6 +1240,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                   ((q(I,J) + q(I+1,J-1)) + q(I,J-1)) / 3.0
     endif
   enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
 
 ! Complete the previously initiated message passing.
   if (id_clock_calc_pre > 0) call cpu_clock_end(id_clock_calc_pre)
@@ -1216,8 +1248,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (nonblock_setup) then
     if ((Isq > is-1) .or. (Jsq > js-1)) then
       call complete_group_pass(CS%pass_tmp_uv, G%Domain)
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsd,jed ; do I=IsdB,IedB ; BT_force_u(I,j) = tmp_u(I,j) ; enddo ; enddo
       do J=JsdB,JedB ; do i=isd,ied ; BT_force_v(i,J) = tmp_v(i,J) ; enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
     call complete_group_pass(CS%pass_gtot, CS%BT_Domain)
     call complete_group_pass(CS%pass_ubt_Cor, G%Domain)
@@ -1232,6 +1266,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (CS%va_polarity(i,j) < 0.0) call swap(gtot_N(i,j), gtot_S(i,j))
   enddo ; enddo
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   !$OMP parallel do default(shared)
   do j=js,je ; do I=is-1,ie
     Cor_ref_u(I,j) =  &
@@ -1244,6 +1279,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         ((amer(I-1,j) * ubt_Cor(I-1,j) + cmer(I  ,j+1) * ubt_Cor(I  ,j+1)) + &
          (bmer(I  ,j) * ubt_Cor(I  ,j) + dmer(I-1,j+1) * ubt_Cor(I-1,j+1)))
   enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   ! Now start new halo updates.
   if (nonblock_setup) then
@@ -1264,6 +1300,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 !$OMP                               Rayleigh_u, Rayleigh_v,                         &
 !$OMP                               use_BT_Cont,BTCL_u,uhbt0,BTCL_v,vhbt0,eta,Idt,US)  &
 !$OMP                       private(u_max_cor,v_max_cor,eta_cor_max,Htot)
+  call cpu_clock_begin(id_btstep_ACC_clock)
   !$OMP do
   do j=js-1,je+1 ; do I=is-1,ie ; av_rem_u(I,j) = 0.0 ; enddo ; enddo
   !$OMP do
@@ -1301,6 +1338,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         bt_rem_v(i,J) = G%mask2dCv(i,J) * (av_rem_v(i,J)**Instep)
     enddo ; enddo
   endif
+  call cpu_clock_end(id_btstep_ACC_clock)
+
   if (CS%linear_wave_drag) then
     !$OMP do
     do j=js,je ; do I=is-1,ie ; if (CS%lin_drag_u(I,j) > 0.0) then
@@ -1322,6 +1361,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif ; enddo ; enddo
   endif
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   ! Zero out the arrays for various time-averaged quantities.
   if (find_etaav) then
     !$OMP do
@@ -1350,6 +1390,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! Set the mass source, after first initializing the halos to 0.
   !$OMP do
   do j=jsvf-1,jevf+1; do i=isvf-1,ievf+1 ; eta_src(i,j) = 0.0 ; enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
+
   if (CS%bound_BT_corr) then ; if (use_BT_Cont .and. CS%BT_cont_bounds) then
     do j=js,je ; do i=is,ie ; if (G%mask2dT(i,j) > 0.0) then
       if (CS%eta_cor(i,j) > 0.0) then
@@ -1377,11 +1419,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (abs(CS%eta_cor(i,j)) > dt*CS%eta_cor_bound(i,j)) &
       CS%eta_cor(i,j) = sign(dt*CS%eta_cor_bound(i,j), CS%eta_cor(i,j))
   enddo ; enddo ; endif ; endif
+
+  call cpu_clock_begin(id_btstep_ACC_clock)
   !$OMP do
   do j=js,je ; do i=is,ie
     eta_src(i,j) = G%mask2dT(i,j) * (Instep * CS%eta_cor(i,j))
   enddo ; enddo
 !$OMP end parallel
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   if (CS%dynamic_psurf) then
     ice_is_rigid = (associated(forces%rigidity_ice_u) .and. &
@@ -1588,6 +1633,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (CS%dynamic_psurf .or. .not.project_velocity) then
       if (use_BT_cont) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv-1,jev+1 ; do I=isv-2,iev+1
           uhbt(I,j) = find_uhbt(ubt(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
@@ -1600,8 +1646,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
                      ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       else
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
               (((Datu(I-1,j)*ubt(I-1,j) + uhbt0(I-1,j)) - &
@@ -1609,13 +1657,16 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                ((Datv(i,J-1)*vbt(i,J-1) + vhbt0(i,J-1)) - &
                 (Datv(i,J)*vbt(i,J) + vhbt0(i,J))))
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           p_surf_dyn(i,j) = dyn_coef_eta(i,j) * (eta_pred(i,j) - eta(i,j))
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
     endif
 
@@ -1624,21 +1675,26 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     if (find_etaav) then
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=js,je ; do i=is,ie
         eta_sum(i,j) = eta_sum(i,j) + wt_accel2(n) * eta_PF_BT(i,j)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
 
     if (interp_eta_PF) then
       wt_end = n*Instep  ! This could be (n-0.5)*Instep.
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsv-1,jev+1 ; do i=isv-1,iev+1
         eta_PF(i,j) = eta_PF_1(i,j) + wt_end*d_eta_PF(i,j)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
 
     if (apply_OBC_flather .or. apply_OBC_open) then
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsv,jev ; do I=isv-2,iev+1
         ubt_old(I,j) = ubt(I,j)
       enddo ; enddo
@@ -1646,6 +1702,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=jsv-2,jev+1 ; do i=isv,iev
         vbt_old(i,J) = vbt(i,J)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
     !GOMP end parallel
 
@@ -1658,18 +1715,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! save the old value of ubt and uhbt
         !GOMP parallel do default(shared)
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-joff,jev+joff ; do i=isv-1,iev
           ubt_prev(i,J) = ubt(i,J) ; uhbt_prev(i,J) = uhbt(i,J)
           ubt_sum_prev(i,J) = ubt_sum(i,J) ; uhbt_sum_prev(i,J) = uhbt_sum(i,J) ; ubt_wtd_prev(i,J) = ubt_wtd(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! save the old value of vbt and vhbt
         !GOMP parallel do default(shared)
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv-ioff,iev+ioff
           vbt_prev(i,J) = vbt(i,J) ; vhbt_prev(i,J) = vhbt(i,J)
           vbt_sum_prev(i,J) = vbt_sum(i,J) ; vhbt_sum_prev(i,J) = vhbt_sum(i,J) ; vbt_wtd_prev(i,J) = vbt_wtd(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
     endif
 
@@ -1677,6 +1738,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (MOD(n+G%first_direction,2)==1) then
       ! On odd-steps, update v first.
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do J=jsv-1,jev ; do i=isv-1,iev+1
         Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -1684,20 +1746,26 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                      (eta_PF_BT(i,j+1)-eta_PF(i,j+1))*gtot_S(i,j+1)) * &
                    dgeo_de * CS%IdyCv(i,J)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
       if (CS%dynamic_psurf) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv-1,iev+1
           PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS%IdyCv(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           PFv(i,J) = 0.0
         endif ; enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
@@ -1711,26 +1779,34 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
         endif
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
 
       if (use_BT_cont) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = find_vhbt(vbt_trans(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       else
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = Datv(i,J)*vbt_trans(i,J) + vhbt0(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J) ; vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
       ! Now update the zonal velocity.
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsv,jev ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) + dzon(I,j) * vbt(i+1,J-1))) - &
@@ -1739,12 +1815,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                      (eta_PF_BT(i+1,j)-eta_PF(i+1,j))*gtot_W(i+1,j)) * &
                     dgeo_de * CS%IdxCu(I,j)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv,jev ; do I=isv-1,iev
           PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS%IdxCu(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
@@ -1754,6 +1833,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
       endif
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsv,jev ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
@@ -1768,27 +1848,35 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         endif
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
 
       if (use_BT_cont) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       else
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
      if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           ubt(I,j) = ubt_prev(I,j); uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
     else
       ! On even steps, update u first.
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) +  dzon(I,j) * vbt(i+1,J-1))) - &
@@ -1797,12 +1885,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                      (eta_PF_BT(i+1,j)-eta_PF(i+1,j))*gtot_W(i+1,j)) * &
                      dgeo_de * CS%IdxCu(I,j)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           PFu(I,j) = PFu(I,j) + (p_surf_dyn(i,j) - p_surf_dyn(i+1,j)) * CS%IdxCu(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
@@ -1813,6 +1904,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
@@ -1827,17 +1919,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         endif
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
 
       if (use_BT_cont) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       else
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
@@ -1849,6 +1946,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       ! Now update the meridional velocity.
       if (CS%use_old_coriolis_bracket_bug) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv,iev
           Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + bmer(I,j) * ubt(I,j)) + &
                   (cmer(I,j+1) * ubt(I,j+1) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -1856,8 +1954,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                        (eta_PF_BT(i,j+1)-eta_PF(i,j+1))*gtot_S(i,j+1)) * &
                       dgeo_de * CS%IdyCv(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       else
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv,iev
           Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                   (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -1865,13 +1965,16 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                        (eta_PF_BT(i,j+1)-eta_PF(i,j+1))*gtot_S(i,j+1)) * &
                       dgeo_de * CS%IdyCv(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%dynamic_psurf) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv,iev
           PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS%IdyCv(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
@@ -1882,6 +1985,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do J=jsv-1,jev ; do i=isv,iev
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
@@ -1896,16 +2000,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
         endif
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
+
       if (use_BT_cont) then
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv,iev
           vhbt(i,J) = find_vhbt(vbt_trans(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       else
         !GOMP do
+        call cpu_clock_begin(id_btstep_ACC_clock)
         do J=jsv-1,jev ; do i=isv,iev
           vhbt(i,J) = Datv(i,J)*vbt_trans(i,J) + vhbt0(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_btstep_ACC_clock)
       endif
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
         !GOMP do
@@ -1919,6 +2029,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !GOMP parallel default(shared)
     if (find_PF) then
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=js,je ; do I=is-1,ie
         PFu_bt_sum(I,j)  = PFu_bt_sum(I,j) + wt_accel2(n) * PFu(I,j)
       enddo ; enddo
@@ -1926,9 +2037,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         PFv_bt_sum(i,J)  = PFv_bt_sum(i,J) + wt_accel2(n) * PFv(i,J)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
     if (find_Cor) then
       !GOMP do
+      call cpu_clock_begin(id_btstep_ACC_clock)
       do j=js,je ; do I=is-1,ie
         Coru_bt_sum(I,j) = Coru_bt_sum(I,j) + wt_accel2(n) * Cor_u(I,j)
       enddo ; enddo
@@ -1936,9 +2049,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) + wt_accel2(n) * Cor_v(i,J)
       enddo ; enddo
+      call cpu_clock_end(id_btstep_ACC_clock)
     endif
 
     !GOMP do
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=js,je ; do I=is-1,ie
       ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
       uhbt_sum(I,j) = uhbt_sum(I,j) + wt_trans(n) * uhbt(I,j)
@@ -1951,6 +2066,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       vbt_wtd(i,J) = vbt_wtd(i,J) + wt_vel(n) * vbt(i,J)
     enddo ; enddo
     !GOMP end parallel
+    call cpu_clock_end(id_btstep_ACC_clock)
 
     if (apply_OBCs) then
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
@@ -1999,12 +2115,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif
 
     !$OMP parallel do default(shared)
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=jsv,jev ; do i=isv,iev
       eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
                  ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
       eta_wtd(i,j) = eta_wtd(i,j) + eta(i,j) * wt_eta(n)
       ! Should there be a concern if eta drops below 0 or G%bathyT?
     enddo ; enddo
+    call cpu_clock_end(id_btstep_ACC_clock)
 
     if (do_hifreq_output) then
       time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dtbt)
@@ -2034,20 +2152,28 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   I_sum_wt_vel = 1.0 / sum_wt_vel ; I_sum_wt_eta = 1.0 / sum_wt_eta
   I_sum_wt_accel = 1.0 / sum_wt_accel ; I_sum_wt_trans = 1.0 / sum_wt_trans
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   if (find_etaav) then ; do j=js,je ; do i=is,ie
     etaav(i,j) = eta_sum(i,j) * I_sum_wt_accel
   enddo ; enddo ; endif
   do j=js-1,je+1 ; do i=is-1,ie+1 ; e_anom(i,j) = 0.0 ; enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
+
   if (interp_eta_PF) then
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=js,je ; do i=is,ie
       e_anom(i,j) = dgeo_de * (0.5 * (eta(i,j) + eta_in(i,j)) - &
                                (eta_PF_1(i,j) + 0.5*d_eta_PF(i,j)))
     enddo ; enddo
+    call cpu_clock_end(id_btstep_ACC_clock)
   else
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=js,je ; do i=is,ie
       e_anom(i,j) = dgeo_de * (0.5 * (eta(i,j) + eta_in(i,j)) - eta_PF(i,j))
     enddo ; enddo
+    call cpu_clock_end(id_btstep_ACC_clock)
   endif
+
   if (apply_OBCs) then
     !!! Not safe for wide halos...
     if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
@@ -2073,10 +2199,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif
   endif
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   ! It is possible that eta_out and eta_in are the same.
   do j=js,je ; do i=is,ie
     eta_out(i,j) = eta_wtd(i,j) * I_sum_wt_eta
   enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
   if (id_clock_pass_post > 0) call cpu_clock_begin(id_clock_pass_post)
@@ -2089,6 +2217,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_pass_post > 0) call cpu_clock_end(id_clock_pass_post)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   do j=js,je ; do I=is-1,ie
     CS%ubtav(I,j) = ubt_sum(I,j) * I_sum_wt_trans
     uhbtav(I,j) = uhbt_sum(I,j) * I_sum_wt_trans
@@ -2104,6 +2233,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
  !###   v_accel_bt(i,J) = v_accel_bt(i,J)  * I_sum_wt_accel
     vbt_wtd(i,J) = vbt_wtd(i,J) * I_sum_wt_vel
   enddo ; enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
   if (id_clock_pass_post > 0) call cpu_clock_begin(id_clock_pass_post)
@@ -2117,6 +2247,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_pass_post > 0) call cpu_clock_end(id_clock_pass_post)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
 
+  call cpu_clock_begin(id_btstep_ACC_clock)
   ! Now calculate each layer's accelerations.
   !$OMP parallel do default(shared)
   do k=1,nz
@@ -2133,6 +2264,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (abs(accel_layer_v(i,J,k)) < accel_underflow) accel_layer_v(i,J,k) = 0.0
     enddo ; enddo
   enddo
+  call cpu_clock_end(id_btstep_ACC_clock)
 
   if (apply_OBCs) then
     ! Correct the accelerations at OBC velocity points, but only in the
@@ -2155,7 +2287,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Calculate diagnostic quantities.
   if (query_averaging_enabled(CS%diag)) then
-
+    call cpu_clock_begin(id_btstep_ACC_clock)
     do j=js,je ; do I=is-1,ie ; CS%ubt_IC(I,j) = ubt_wtd(I,j) ; enddo ; enddo
     do J=js-1,je ; do i=is,ie ; CS%vbt_IC(i,J) = vbt_wtd(i,J) ; enddo ; enddo
     if (use_BT_cont) then
@@ -2173,6 +2305,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         CS%vhbt_IC(i,J) = vbt_wtd(i,J) * Datv(i,J) + vhbt0(i,J)
       enddo ; enddo
     endif
+    call cpu_clock_end(id_btstep_ACC_clock)
 
 !  Offer various barotropic terms for averaging.
     if (CS%id_PFu_bt > 0) then
@@ -4381,6 +4514,10 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   id_clock_pass_post = cpu_clock_id('(Ocean BT post-step halo updates)', grain=CLOCK_ROUTINE)
   if (dtbt_input <= 0.0) &
     id_clock_sync = cpu_clock_id('(Ocean BT global synch)', grain=CLOCK_ROUTINE)
+
+! BMJ OpenACC timer info
+id_btstep_ACC_clock = cpu_clock_id('BMJ btstep Time', grain = CLOCK_MODULE)
+id_btstep_wkard = cpu_clock_id('BMJ workaround array Time',  grain=CLOCK_MODULE)
 
 end subroutine barotropic_init
 

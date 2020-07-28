@@ -16,13 +16,16 @@ use MOM_string_functions, only : uppercase
 use MOM_unit_scaling,  only : unit_scale_type
 use MOM_variables,     only : accel_diag_ptrs
 use MOM_verticalGrid,  only : verticalGrid_type
+!use openacc
 
+use MOM_cpu_clock, only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_MODULE
 implicit none ; private
 
 public CorAdCalc, CoriolisAdv_init, CoriolisAdv_end
 
 #include <MOM_memory.h>
 
+integer :: id_clock_Corad_Port
 !> Control structure for mom_coriolisadv
 type, public :: CoriolisAdv_CS ; private
   integer :: Coriolis_Scheme !< Selects the discretization for the Coriolis terms.
@@ -224,9 +227,12 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
   h_tiny = GV%Angstrom_H  ! Perhaps this should be set to h_neglect instead.
 
   !$OMP parallel do default(private) shared(Isq,Ieq,Jsq,Jeq,G,Area_h)
+  call cpu_clock_begin(id_clock_Corad_Port)
   do j=Jsq-1,Jeq+2 ; do I=Isq-1,Ieq+2
     Area_h(i,j) = G%mask2dT(i,j) * G%areaT(i,j)
   enddo ; enddo
+  call cpu_clock_end(id_clock_Corad_Port)
+  
   if (associated(OBC)) then ; do n=1,OBC%number_of_segments
     if (.not. OBC%segment(n)%on_pe) cycle
     I = OBC%segment(n)%HI%IsdB ; J = OBC%segment(n)%HI%JsdB
@@ -249,10 +255,12 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
     endif
   enddo ; endif
   !$OMP parallel do default(private) shared(Isq,Ieq,Jsq,Jeq,G,Area_h,Area_q)
+  call cpu_clock_begin(id_clock_Corad_Port)
   do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
     Area_q(i,j) = (Area_h(i,j) + Area_h(i+1,j+1)) + &
                   (Area_h(i+1,j) + Area_h(i,j+1))
   enddo ; enddo
+  call cpu_clock_end(id_clock_Corad_Port)
 
   !$OMP parallel do default(private) shared(u,v,h,uh,vh,CAu,CAv,G,CS,AD,Area_h,Area_q,&
   !$OMP                        RV,PV,is,ie,js,je,Isq,Ieq,Jsq,Jeq,nz,h_neglect,h_tiny,OBC)
@@ -263,6 +271,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
     ! vorticity is second order accurate everywhere with free slip b.c.s,
     ! but only first order accurate at boundaries with no slip b.c.s.
     ! First calculate the contributions to the circulation around the q-point.
+    call cpu_clock_begin(id_clock_Corad_Port)
     do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
       dvdx(I,J) = (v(i+1,J,k)*G%dyCv(i+1,J) - v(i,J,k)*G%dyCv(i,J))
       dudy(I,J) = (u(I,j+1,k)*G%dxCu(I,j+1) - u(I,j,k)*G%dxCu(I,j))
@@ -273,13 +282,16 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
     do j=Jsq-1,Jeq+2 ; do I=Isq-1,Ieq+1
       hArea_u(I,j) = 0.5*(Area_h(i,j) * h(i,j,k) + Area_h(i+1,j) * h(i+1,j,k))
     enddo ; enddo
+    call cpu_clock_end(id_clock_Corad_Port)
     if (CS%Coriolis_En_Dis) then
+      call cpu_clock_begin(id_clock_Corad_Port)
       do j=Jsq,Jeq+1 ; do I=is-1,ie
         uh_center(I,j) = 0.5 * (G%dy_Cu(I,j) * u(I,j,k)) * (h(i,j,k) + h(i+1,j,k))
       enddo ; enddo
       do J=js-1,je ; do i=Isq,Ieq+1
         vh_center(i,J) = 0.5 * (G%dx_Cv(i,J) * v(i,J,k)) * (h(i,j,k) + h(i,j+1,k))
       enddo ; enddo
+      call cpu_clock_end(id_clock_Corad_Port)
     endif
 
     ! Adjust circulation components to relative vorticity and thickness projected onto
@@ -406,6 +418,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
       endif
     enddo ; endif
 
+    call cpu_clock_begin(id_clock_Corad_Port)
     do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
       if (CS%no_slip ) then
         relative_vorticity = (2.0-G%mask2dBu(I,J)) * (dvdx(I,J) - dudy(I,J)) * G%IareaBu(I,J)
@@ -444,6 +457,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
       if (associated(AD%rv_x_v) .or. associated(AD%rv_x_u)) &
         q2(I,J) = relative_vorticity * Ih
     enddo ; enddo
+    call cpu_clock_end(id_clock_Corad_Port)
 
     !   a, b, c, and d are combinations of neighboring potential
     ! vorticities which form the Arakawa and Hsu vorticity advection
@@ -573,6 +587,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
     if (CS%Coriolis_Scheme == SADOURNY75_ENERGY) then
       if (CS%Coriolis_En_Dis) then
         ! Energy dissipating biased scheme, Hallberg 200x
+        call cpu_clock_begin(id_clock_Corad_Port)
         do j=js,je ; do I=Isq,Ieq
           if (q(I,J)*u(I,j,k) == 0.0) then
             temp1 = q(I,J) * ( (vh_max(i,j)+vh_max(i+1,j)) &
@@ -592,13 +607,16 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
           endif
           CAu(I,j,k) = 0.25 * G%IdxCu(I,j) * (temp1 + temp2)
         enddo ; enddo
+        call cpu_clock_end(id_clock_Corad_Port)
       else
         ! Energy conserving scheme, Sadourny 1975
+        call cpu_clock_begin(id_clock_Corad_Port)
         do j=js,je ; do I=Isq,Ieq
           CAu(I,j,k) = 0.25 * &
             (q(I,J) * (vh(i+1,J,k) + vh(i,J,k)) + &
              q(I,J-1) * (vh(i,J-1,k) + vh(i+1,J-1,k))) * G%IdxCu(I,j)
         enddo ; enddo
+        call cpu_clock_end(id_clock_Corad_Port)
       endif
     elseif (CS%Coriolis_Scheme == SADOURNY75_ENSTRO) then
       do j=js,je ; do I=Isq,Ieq
@@ -651,6 +669,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
 
 
     if (CS%bound_Coriolis) then
+      call cpu_clock_begin(id_clock_Corad_Port)
       do j=js,je ; do I=Isq,Ieq
         max_fv = MAX(max_fvq(I,J), max_fvq(I,J-1))
         min_fv = MIN(min_fvq(I,J), min_fvq(I,J-1))
@@ -662,13 +681,16 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
           if (CAu(I,j,k) < min_fv) CAu(I,j,k) = min_fv
         endif
       enddo ; enddo
+      call cpu_clock_end(id_clock_Corad_Port)
     endif
 
-    ! Term - d(KE)/dx.
+    ! Term - d(KE)/dx
+    call cpu_clock_begin(id_clock_Corad_Port)
     do j=js,je ; do I=Isq,Ieq
       CAu(I,j,k) = CAu(I,j,k) - KEx(I,j)
       if (associated(AD%gradKEu)) AD%gradKEu(I,j,k) = -KEx(I,j)
     enddo ; enddo
+    call cpu_clock_end(id_clock_Corad_Port)
 
 
     ! Calculate the tendencies of meridional velocity due to the Coriolis
@@ -677,6 +699,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
     if (CS%Coriolis_Scheme == SADOURNY75_ENERGY) then
       if (CS%Coriolis_En_Dis) then
         ! Energy dissipating biased scheme, Hallberg 200x
+        call cpu_clock_begin(id_clock_Corad_Port)
         do J=Jsq,Jeq ; do i=is,ie
           if (q(I-1,J)*v(i,J,k) == 0.0) then
             temp1 = q(I-1,J) * ( (uh_max(i-1,j)+uh_max(i-1,j+1)) &
@@ -696,13 +719,16 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
           endif
           CAv(i,J,k) = -0.25 * G%IdyCv(i,J) * (temp1 + temp2)
         enddo ; enddo
+        call cpu_clock_end(id_clock_Corad_Port)
       else
         ! Energy conserving scheme, Sadourny 1975
+        call cpu_clock_begin(id_clock_Corad_Port)
         do J=Jsq,Jeq ; do i=is,ie
           CAv(i,J,k) = - 0.25* &
               (q(I-1,J)*(uh(I-1,j,k) + uh(I-1,j+1,k)) + &
                q(I,J)*(uh(I,j,k) + uh(I,j+1,k))) * G%IdyCv(i,J)
         enddo ; enddo
+        call cpu_clock_end(id_clock_Corad_Port)
       endif
     elseif (CS%Coriolis_Scheme == SADOURNY75_ENSTRO) then
       do J=Jsq,Jeq ; do i=is,ie
@@ -759,6 +785,7 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
     enddo ; enddo ; endif
 
     if (CS%bound_Coriolis) then
+      call cpu_clock_begin(id_clock_Corad_Port)
       do J=Jsq,Jeq ; do i=is,ie
         max_fu = MAX(max_fuq(I,J),max_fuq(I-1,J))
         min_fu = MIN(min_fuq(I,J),min_fuq(I-1,J))
@@ -768,13 +795,16 @@ subroutine CorAdCalc(u, v, h, uh, vh, CAu, CAv, OBC, AD, G, GV, US, CS)
           if (CAv(i,J,k) < min_fu) CAv(i,J,k) = min_fu
         endif
       enddo ; enddo
+      call cpu_clock_end(id_clock_Corad_Port)
     endif
 
     ! Term - d(KE)/dy.
+    call cpu_clock_begin(id_clock_Corad_Port)
     do J=Jsq,Jeq ; do i=is,ie
       CAv(i,J,k) = CAv(i,J,k) - KEy(i,J)
       if (associated(AD%gradKEv)) AD%gradKEv(i,J,k) = -KEy(i,J)
     enddo ; enddo
+    call cpu_clock_end(id_clock_Corad_Port)
 
     if (associated(AD%rv_x_u) .or. associated(AD%rv_x_v)) then
       ! Calculate the Coriolis-like acceleration due to relative vorticity.
@@ -1085,6 +1115,8 @@ subroutine CoriolisAdv_init(Time, G, GV, US, param_file, diag, AD, CS)
   CS%id_rvxv = register_diag_field('ocean_model', 'rvxv', diag%axesCuL, Time, &
      'Zonal Acceleration from Relative Vorticity', 'm-1 s-2', conversion=US%L_T2_to_m_s2)
   if (CS%id_rvxv > 0) call safe_alloc_ptr(AD%rv_x_v,IsdB,IedB,jsd,jed,nz)
+
+  id_clock_Corad_Port = cpu_clock_id('SL CoradAdvec Time', grain=CLOCK_MODULE)
 
 end subroutine CoriolisAdv_init
 
